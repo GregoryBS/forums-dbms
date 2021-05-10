@@ -9,6 +9,9 @@ ENV POSTGRES_PASSWORD password
 
 USER $POSTGRES_USER
 
+WORKDIR /app
+COPY . .
+
 RUN pg_createcluster 13 main &&\
     service postgresql start &&\
     psql -U $POSTGRES_USER -f role_db.sql &&\
@@ -18,7 +21,5 @@ RUN pg_createcluster 13 main &&\
 VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
 EXPOSE 5000
-WORKDIR /app
-COPY . .
 
 CMD service postgresql start && python3 main.py
