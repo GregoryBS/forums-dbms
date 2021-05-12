@@ -1,6 +1,6 @@
 create table users (
     nick text not null primary key,
-    full text not null,
+    fullname text not null,
     email text not null,
     about text
 );
@@ -21,7 +21,7 @@ create table threads (
     forum text not null,
     message text not null,
     slug text not null unique,
-    created timestamp
+    created timestamp,
     votes int,
     constraint to_user foreign key (author) references users(nick) on delete cascade,
     constraint to_forum foreign key (forum) references forums(slug) on delete cascade
