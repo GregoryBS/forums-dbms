@@ -1,0 +1,9 @@
+app:
+  port: 5000
+
+postgres:
+  database: forums
+  user: anna
+  password: yoh
+  host: localhost
+  port: 5432
