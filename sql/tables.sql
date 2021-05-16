@@ -8,7 +8,7 @@ create table users (
 );
 
 create table forums (
-    slug text not null primary key,
+    slug citext not null primary key,
     title text not null,
     author citext not null,
     threads int,
@@ -20,7 +20,7 @@ create table threads (
     id serial not null primary key,
     title text not null,
     author citext not null,
-    forum text not null,
+    forum citext not null,
     message text not null,
     slug text not null unique,
     created timestamp,
@@ -33,7 +33,7 @@ create table posts (
     id bigserial not null primary key,
     parent bigint not null default 0,
     author citext not null,
-    forum text not null,
+    forum citext not null,
     thread int not null,
     message text not null,
     created timestamp,
