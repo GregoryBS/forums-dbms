@@ -34,3 +34,15 @@ async def get_forum(request):
     slug = request.match_info['slug']
     data, status = await usecases.get_forum(request.app, slug)
     return web.json_response(data, status = status)
+
+async def create_thread(request):
+    slug = request.match_info['slug']
+    data = await request.json()
+    data, status = await usecases.create_thread(request.app, slug, data)
+    return web.json_response(data, status = status)
+
+async def create_post(request):
+    slug_or_id = request.match_info['slug_or_id']
+    data = await request.json()
+    data, status = await usecases.create_post(request.app, slug_or_id, data)
+    return web.json_response(data, status = status)

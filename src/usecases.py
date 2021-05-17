@@ -1,3 +1,6 @@
+from asyncpg.exceptions import UniqueViolationError, ForeignKeyViolationError
+
+from datetime import datetime
 
 async def signup(app, nick, form):
     async with app['db_pool'].acquire() as conn:
@@ -79,3 +82,47 @@ async def get_forum(app, slug):
         except:
             error = {'message': 'forum not found'}
             return error, 404
+
+async def create_thread(app, slug, form):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            data = await conn.fetch("select nickname as slug from users where nickname = $1 union all select slug from forums where slug = $2;", 
+                                    form['author'], slug)
+            data = list(map(dict, data))
+            if len(data) < 2:
+                error = {'message': 'user or forum not found'}
+                return error, 404
+
+            created = datetime.now()
+            if form.get('created'):
+                created = datetime.strptime(form['created'], '%Y-%m-%dT%H:%M:%S.%fZ')
+            forum = await conn.fetchrow("insert into threads values(default, $1, $2, $3, $4, $5, $6, 0) returning *;", 
+                                        form['title'], data[0]['slug'], data[1]['slug'], form['message'], form.get('slug'), created)
+            forum = dict(forum)
+            forum['created'] = created
+            return forum, 201
+
+        except:
+            forum = await conn.fetchrow("select id, title, author, votes, message, forum, slug, created from forums where slug = $1;", form['slug'])
+            return dict(forum), 409
+
+async def create_post(app, ident, posts):
+    async with app['db_pool'].acquire() as conn:
+        async with conn.transaction():
+            try:
+                thread = await conn.fetchrow("select id, forum from threads where id = $1 or slug = $2;", ident, ident)
+                if thread is None:
+                    error = {'message': 'thread not found'}
+                    return error, 404
+
+                created = datetime.now()
+                query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false) returning *;")
+                for post in posts:
+                    post = await query.fetchrow(post['parent'], post['author'], thread['forum'], thread['id'], post['message'], created)
+                    post = dict(post)
+                    post['created'] = created
+                return posts, 201
+
+            except:
+                error = {'message': 'thread not found'}
+                return error, 409

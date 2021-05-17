@@ -7,3 +7,5 @@ def setup_routes(app):
     app.router.add_post('/api/user/{nick}/profile', update_profile, name = 'personal_edit')
     app.router.add_post('/api/forum/create', create_forum, name = 'new_forum')
     app.router.add_get('/api/forum/{slug}/details', get_forum, name = 'forum_details')
+    app.router.add_post('/api/forum/{slug}/create', create_thread, name = 'new_thread')
+    app.router.add_post('/api/thread/{slug_or_id}/create', create_post, name = 'new_post')
