@@ -22,7 +22,7 @@ create table threads (
     author citext not null,
     forum citext not null,
     message text not null,
-    slug text unique,
+    slug citext unique,
     created timestamp,
     votes int,
     constraint to_user foreign key (author) references users(nickname) on delete cascade,
@@ -31,7 +31,7 @@ create table threads (
 
 create table posts (
     id bigserial primary key,
-    parent bigint default 0 references posts(id),
+    parent bigint not null,
     author citext not null,
     forum citext not null,
     thread int not null,
@@ -67,8 +67,11 @@ execute function update_forum_threads();
 create function update_forum_posts()
 returns trigger as $$
 begin 
-    update forums set posts = posts + 1 where slug = NEW.forum;
-    return NEW;
+    if NEW.parent = 0 or NEW.parent in (select id from posts) then
+        update forums set posts = posts + 1 where slug = NEW.forum;
+        return NEW;
+    end if;
+    return null;
 end;
 $$ language plpgsql;
 

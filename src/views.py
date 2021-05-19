@@ -5,6 +5,15 @@ from . import usecases
 async def index(request):
     return web.Response(text='Hello Aiohttp!')
 
+def get_slug_or_id(request):
+    slug_or_id = request.match_info['slug_or_id']
+    try:
+        value = int(slug_or_id)
+        slug_or_id = {'name': 'id', 'value': value}
+    except:
+        slug_or_id = {'name': 'slug', 'value': slug_or_id}
+    return slug_or_id
+
 async def signup(request):
     nick = request.match_info['nick']
     data = await request.json()
@@ -42,13 +51,13 @@ async def create_thread(request):
     return web.json_response(data, status = status)
 
 async def create_post(request):
-    slug_or_id = request.match_info['slug_or_id']
+    slug_or_id = get_slug_or_id(request)
     data = await request.json()
     data, status = await usecases.create_post(request.app, slug_or_id, data)
     return web.json_response(data, status = status)
 
 async def get_thread(request):
-    slug_or_id = request.match_info['slug_or_id']
+    slug_or_id = get_slug_or_id(request)
     data, status = await usecases.get_thread(request.app, slug_or_id)
     return web.json_response(data, status = status)
 

@@ -100,46 +100,45 @@ async def create_thread(app, slug, form):
             created = datetime.now()
             if form.get('created'):
                 created = datetime.strptime(form['created'], '%Y-%m-%dT%H:%M:%S.%fZ')
-            forum = await conn.fetchrow("insert into threads values(default, $1, $2, $3, $4, $5, $6, 0) returning *;", 
+            thread = await conn.fetchrow("insert into threads values(default, $1, $2, $3, $4, $5, $6, 0) returning *;", 
                                         form['title'], data[0]['slug'], data[1]['slug'], form['message'], form.get('slug'), created)
-            forum = dict(forum)
-            format_datetime(forum)
-            return forum, 201
+            thread = dict(thread)
+            format_datetime(thread)
+            return thread, 201
 
         except:
-            forum = await conn.fetchrow("select id, title, author, votes, message, forum, slug, created from forums where slug = $1;", form['slug'])
-            return dict(forum), 409
+            thread = await conn.fetchrow("select id, title, author, votes, message, forum, slug, created from threads where slug = $1;", form['slug'])
+            thread = dict(thread)
+            format_datetime(thread)
+            return thread, 409
 
 async def create_post(app, ident, posts):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             try:
-                print(posts)
-                thread = await conn.fetchrow("select id, forum from threads where id = $1 or slug = $2;", ident, ident)
+                thread = await conn.fetchrow("select id, forum from threads where {:s} = $1;".format(ident['name']), ident['value'])
                 if thread is None:
                     error = {'message': 'thread not found'}
                     return error, 404
 
                 created = datetime.now()
                 query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false) returning *;")
-                print(posts)
-                for post in posts:
-                    print("post: ", post)
-                    post = await query.fetchrow(post['parent'], post['author'], thread['forum'], thread['id'], post['message'], created)
-                    post = dict(post)
-                    format_datetime(post)
+                for i in range(len(posts)):
+                    posts[i] = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
+                                                    thread['forum'], thread['id'], posts[i]['message'], created)
+                    posts[i] = dict(posts[i])
+                    format_datetime(posts[i])
                 return posts, 201
 
-            except Exception as e:
-                print(e)
+            except:
                 error = {'message': 'cannot create posts'}
                 return error, 409
 
 async def get_thread(app, ident):
     async with app['db_pool'].acquire() as conn:
         try:
-            thread = await conn.fetchrow("select id, forum, title, author, created, message, slug, votes from threads where id = $1 or slug = $2;", 
-                                         ident, ident)
+            thread = await conn.fetchrow("select id, forum, title, author, created, message, slug, votes from threads where {:s} = $1;".
+                                         format(ident['name']), ident['value'])
             thread = dict(thread)
             format_datetime(thread)
             return thread, 200
