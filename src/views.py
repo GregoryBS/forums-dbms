@@ -46,3 +46,16 @@ async def create_post(request):
     data = await request.json()
     data, status = await usecases.create_post(request.app, slug_or_id, data)
     return web.json_response(data, status = status)
+
+async def get_thread(request):
+    slug_or_id = request.match_info['slug_or_id']
+    data, status = await usecases.get_thread(request.app, slug_or_id)
+    return web.json_response(data, status = status)
+
+async def get_forum_threads(request):
+    slug = request.match_info['slug']
+    limit = int(request.query.get('limit', 100))
+    since = request.query.get('since')
+    desc = request.query.get('desc', 'false')
+    data, status = await usecases.forum_threads(request.app, slug, limit, since, desc)
+    return web.json_response(data, status = status)

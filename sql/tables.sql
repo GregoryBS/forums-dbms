@@ -31,7 +31,7 @@ create table threads (
 
 create table posts (
     id bigserial primary key,
-    parent bigint default 0 references posts,
+    parent bigint default 0 references posts(id),
     author citext not null,
     forum citext not null,
     thread int not null,

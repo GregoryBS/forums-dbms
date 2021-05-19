@@ -2,6 +2,10 @@ from asyncpg.exceptions import UniqueViolationError, ForeignKeyViolationError
 
 from datetime import datetime
 
+def format_datetime(x):
+    x['created'] = x['created'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    return x
+
 async def signup(app, nick, form):
     async with app['db_pool'].acquire() as conn:
         try:
@@ -99,7 +103,7 @@ async def create_thread(app, slug, form):
             forum = await conn.fetchrow("insert into threads values(default, $1, $2, $3, $4, $5, $6, 0) returning *;", 
                                         form['title'], data[0]['slug'], data[1]['slug'], form['message'], form.get('slug'), created)
             forum = dict(forum)
-            forum['created'] = created
+            format_datetime(forum)
             return forum, 201
 
         except:
@@ -110,6 +114,7 @@ async def create_post(app, ident, posts):
     async with app['db_pool'].acquire() as conn:
         async with conn.transaction():
             try:
+                print(posts)
                 thread = await conn.fetchrow("select id, forum from threads where id = $1 or slug = $2;", ident, ident)
                 if thread is None:
                     error = {'message': 'thread not found'}
@@ -117,12 +122,59 @@ async def create_post(app, ident, posts):
 
                 created = datetime.now()
                 query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false) returning *;")
+                print(posts)
                 for post in posts:
+                    print("post: ", post)
                     post = await query.fetchrow(post['parent'], post['author'], thread['forum'], thread['id'], post['message'], created)
                     post = dict(post)
-                    post['created'] = created
+                    format_datetime(post)
                 return posts, 201
 
-            except:
-                error = {'message': 'thread not found'}
+            except Exception as e:
+                print(e)
+                error = {'message': 'cannot create posts'}
                 return error, 409
+
+async def get_thread(app, ident):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            thread = await conn.fetchrow("select id, forum, title, author, created, message, slug, votes from threads where id = $1 or slug = $2;", 
+                                         ident, ident)
+            thread = dict(thread)
+            format_datetime(thread)
+            return thread, 200
+
+        except:
+            error = {'message': 'thread not found'}
+            return error, 404
+
+async def forum_threads(app, slug, limit, since, desc):
+    async with app['db_pool'].acquire() as conn:
+        forum = await conn.fetchrow("select slug from forums where slug = $1;", slug)
+        if forum is None:
+            error = {'message': 'forum not found'}
+            return error, 404
+
+        counter = 2
+        fields = []
+        query = "select id, forum, title, author, created, message, slug, votes from threads where forum = $1 "
+        if since:
+            if desc == 'true':
+                query += "and created <= ${:d} ".format(counter)
+            else:
+                query += "and created >= ${:d} ".format(counter)
+
+            since = datetime.strptime(since, '%Y-%m-%dT%H:%M:%S.%fZ')
+            fields.append(since)
+            counter += 1
+
+        query += "order by created "   
+        if desc == 'true':
+            query += "desc "
+        query += "limit ${:d};".format(counter)
+        fields.append(limit)
+
+        threads = await conn.fetch(query, slug, *fields)
+        threads = list(map(dict, threads))
+        threads = list(map(format_datetime, threads))
+        return threads, 200
