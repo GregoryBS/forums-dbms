@@ -62,6 +62,7 @@ $$ language plpgsql;
 
 create trigger new_forum_thread after insert
 on threads
+for each row
 execute function update_forum_threads();
 
 create function update_forum_posts()
@@ -77,4 +78,25 @@ $$ language plpgsql;
 
 create trigger new_forum_post after insert
 on posts
+for each row
 execute function update_forum_posts();
+
+create function update_thread_votes()
+returns trigger as $$
+begin 
+    if TG_OP = 'INSERT' then
+        update threads set votes = votes + NEW.value where id = NEW.thread;
+        return NEW;
+    end if;
+    if OLD.value != NEW.value then 
+        update threads set votes = votes + 2 * NEW.value where id = NEW.thread;
+        return NEW;
+    end if;
+    return null;
+end;
+$$ language plpgsql;
+
+create trigger new_thread_vote after insert or update
+on votes
+for each row
+execute function update_thread_votes();

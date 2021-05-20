@@ -76,3 +76,9 @@ async def clear(request):
 async def get_status(request):
     data, status = usecases.status(request.app)
     return web.json_response(data, status = status)
+
+async def thread_vote(request):
+    slug_or_id = get_slug_or_id(request)
+    data = await request.json()
+    data, status = await usecases.new_vote(request.app, slug_or_id, data)
+    return web.json_response(data, status = status)

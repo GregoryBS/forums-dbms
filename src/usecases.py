@@ -181,7 +181,7 @@ async def forum_threads(app, slug, limit, since, desc):
 async def clear(app):
     async with app['db_pool'].acquire() as conn:
         try:
-            conn.execute("truncate users cascade;")
+            await conn.execute("truncate users cascade;")
             return 200
 
         except Exception as e:
@@ -191,8 +191,7 @@ async def clear(app):
 async def status(app):
     async with app['db_pool'].acquire() as conn:
         try:
-            data = conn.fetch("select relname, n_live_tup FROM pg_stat_user_tables where relname in ('users', 'forums', 'posts', 'threads');")
-            data = list(map(dict, data))
+            data = await conn.fetch("select relname, n_live_tup FROM pg_stat_user_tables where relname in ('users', 'forums', 'posts', 'threads');")
             response = {}
             for row in data:
                 response[row['relname'][:-1]] = row['n_live_tup']
@@ -202,3 +201,17 @@ async def status(app):
             print("unexpected exception while getting status of db: ", e)
             return None, 500
 
+async def new_vote(app, ident, vote):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            thread = await conn.fetchrow("select id from threads where {:s} = $1;".format(ident['name']), ident['value'])
+            await conn.execute("insert into votes values($1, $2, $3);", vote['nickname'], thread['id'], vote['voice'])
+            return await get_thread(app, ident)
+
+        except UniqueViolationError:
+            await conn.execute("update votes set value = $1 where author = $2 and thread = $3;", vote['voice'], vote['nickname'], thread['id'])
+            return await get_thread(app, ident)
+
+        except ForeignKeyViolationError:
+            error = {'message': 'user not found'}
+            return error, 404
