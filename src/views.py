@@ -68,3 +68,11 @@ async def get_forum_threads(request):
     desc = request.query.get('desc', 'false')
     data, status = await usecases.forum_threads(request.app, slug, limit, since, desc)
     return web.json_response(data, status = status)
+
+async def clear(request):
+    status = usecases.clear(request.app)
+    return web.json_response(None, status = status)
+
+async def get_status(request):
+    data, status = usecases.status(request.app)
+    return web.json_response(data, status = status)

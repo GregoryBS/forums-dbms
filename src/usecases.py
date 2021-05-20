@@ -177,3 +177,28 @@ async def forum_threads(app, slug, limit, since, desc):
         threads = list(map(dict, threads))
         threads = list(map(format_datetime, threads))
         return threads, 200
+
+async def clear(app):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            conn.execute("truncate users cascade;")
+            return 200
+
+        except Exception as e:
+            print("unexpected exception while clearing db: ", e)
+            return 500
+
+async def status(app):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            data = conn.fetch("select relname, n_live_tup FROM pg_stat_user_tables where relname in ('users', 'forums', 'posts', 'threads');")
+            data = list(map(dict, data))
+            response = {}
+            for row in data:
+                response[row['relname'][:-1]] = row['n_live_tup']
+            return response, 200
+
+        except Exception as e:
+            print("unexpected exception while getting status of db: ", e)
+            return None, 500
+

@@ -11,3 +11,5 @@ def setup_routes(app):
     app.router.add_post('/api/thread/{slug_or_id}/create', create_post, name = 'new_post')
     app.router.add_get('/api/thread/{slug_or_id}/details', get_thread, name = 'thread_details')
     app.router.add_get('/api/forum/{slug}/threads', get_forum_threads, name = 'forum_threads')
+    app.router.add_post('/api/service/clear', clear, name = 'clear')
+    app.router.add_get('/api/service/status', get_status, name = 'status')
