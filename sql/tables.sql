@@ -38,6 +38,7 @@ create table posts (
     message text not null,
     created timestamp,
     edit boolean,
+    path bigint array,
     constraint to_user foreign key (author) references users(nickname) on delete cascade,
     constraint to_forum foreign key (forum) references forums(slug) on delete cascade,
     constraint to_thread foreign key (thread) references threads(id) on delete cascade
@@ -64,6 +65,23 @@ create trigger new_forum_thread after insert
 on threads
 for each row
 execute function update_forum_threads();
+
+create function posts_path()
+returns trigger as $$
+begin 
+    if NEW.parent = 0 then
+        NEW.path = array[NEW.id];
+    else
+        select array_append(path, NEW.id) from posts where id = NEW.parent into NEW.path;
+    end if;
+    return NEW;
+end;
+$$ language plpgsql;
+
+create trigger new_post_path before insert
+on posts
+for each row
+execute function posts_path();
 
 create function update_forum_posts()
 returns trigger as $$
