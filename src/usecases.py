@@ -122,7 +122,8 @@ async def create_post(app, ident, posts):
                     return error, 404
 
                 created = datetime.now()
-                query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false) returning *;")
+                query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false, null) " + \
+                    "returning id, parent, author, forum, thread, message, created, edit;")
                 for i in range(len(posts)):
                     posts[i] = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
                                                     thread['forum'], thread['id'], posts[i]['message'], created)
@@ -215,3 +216,83 @@ async def new_vote(app, ident, vote):
         except ForeignKeyViolationError:
             error = {'message': 'user not found'}
             return error, 404
+
+async def update_thread(app, ident, form):
+    async with app['db_pool'].acquire() as conn:
+        try:
+            thread = await conn.fetchrow("update threads set title = $1, message = $2 where {:s} = $3 returning *;".format(ident['name']), 
+                                         form['title'], form['message'], ident['value'])
+            if thread is None:
+                error = {'message': 'thread not found'}
+                return error, 404
+
+            thread = dict(thread)
+            format_datetime(thread)
+            return thread, 200
+
+        except:
+            error = {'message': 'thread cannot be updated'}
+            return error, 409
+
+async def thread_posts(app, ident, limit, since, sort, desc):
+    counter = 2
+    fields = []
+    query = "select id, parent, author, forum, thread, message, created, edit, path from posts where thread = $1 "
+
+    if sort == 'flat':
+        if since:
+            if desc == 'true':
+                query += "and id < ${:d} ".format(counter)
+            else:
+                query += "and id > ${:d} ".format(counter)
+
+            fields.append(since)
+            counter += 1
+        if desc == 'true':
+            query += "order by created desc, id desc "   
+        else:
+            query += "order by created, id "   
+        query += "limit ${:d};".format(counter)
+
+    elif sort == 'tree':
+        if since:
+            if desc == 'true':
+                query += "and path < (select path from posts where id = ${:d}) ".format(counter)
+            else:
+                query += "and path > (select path from posts where id = ${:d}) ".format(counter)
+
+            fields.append(since)
+            counter += 1
+        query += "order by path " 
+        if desc == 'true':
+            query += "desc "       
+        query += "limit ${:d};".format(counter)
+
+    elif sort == 'parent_tree':
+        query += "and path[1] in (select id from posts where thread = $1 and parent = 0 "
+        if since:
+            if desc == 'true':
+                query += "and path[1] < (select path[1] from posts where id = ${:d}) ".format(counter)
+            else:
+                query += "and path[1] > (select path[1] from posts where id = ${:d}) ".format(counter)
+
+            fields.append(since)
+            counter += 1
+
+        if desc == 'true':
+            query += "order by id desc limit ${:d}) order by path[1] desc, path;".format(counter)
+        else:
+            query += "order by id limit ${:d}) order by path[1], path;".format(counter)
+
+    fields.append(limit)
+
+    async with app['db_pool'].acquire() as conn:
+        thread = await conn.fetchrow("select id from threads where {:s} = $1;".format(ident['name']), ident['value'])
+        if thread is None:
+            error = {'message': 'thread not found'}
+            return error, 404
+
+        posts = await conn.fetch(query, thread['id'], *fields)
+        posts = list(map(dict, posts))
+        posts = list(map(format_datetime, posts))
+        return posts, 200

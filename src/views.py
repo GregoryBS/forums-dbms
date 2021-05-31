@@ -82,3 +82,18 @@ async def thread_vote(request):
     data = await request.json()
     data, status = await usecases.new_vote(request.app, slug_or_id, data)
     return web.json_response(data, status = status)
+
+async def update_thread(request):
+    slug_or_id = get_slug_or_id(request)
+    data = await request.json()
+    data, status = await usecases.update_thread(request.app, slug_or_id, data)
+    return web.json_response(data, status = status)
+
+async def get_thread_posts(request):
+    slug_or_id = get_slug_or_id(request)
+    limit = int(request.query.get('limit', 100))
+    since = int(request.query.get('since', 0))
+    sort = request.query.get('sort', 'flat')
+    desc = request.query.get('desc', 'false')
+    data, status = await usecases.thread_posts(request.app, slug_or_id, limit, since, sort, desc)
+    return web.json_response(data, status = status)

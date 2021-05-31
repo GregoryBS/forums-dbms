@@ -14,3 +14,5 @@ def setup_routes(app):
     app.router.add_post('/api/service/clear', clear, name = 'clear')
     app.router.add_get('/api/service/status', get_status, name = 'status')
     app.router.add_post('/api/thread/{slug_or_id}/vote', thread_vote, name = 'new_vote')
+    app.router.add_post('/api/thread/{slug_or_id}/details', update_thread, name = 'thread_update')
+    app.router.add_get('/api/thread/{slug_or_id}/posts', get_thread_posts, name = 'thread_posts')
