@@ -2,10 +2,6 @@ from asyncpg.exceptions import UniqueViolationError, ForeignKeyViolationError
 
 from datetime import datetime
 
-def format_datetime(x):
-    x['created'] = x['created'].strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-    return x
-
 async def signup(app, nick, form):
     async with app['db_pool'].acquire() as conn:
         try:
@@ -97,19 +93,17 @@ async def create_thread(app, slug, form):
                 error = {'message': 'user or forum not found'}
                 return error, 404
 
-            created = datetime.now()
+            created = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
             if form.get('created'):
-                created = datetime.strptime(form['created'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                created = form['created']
             thread = await conn.fetchrow("insert into threads values(default, $1, $2, $3, $4, $5, $6, 0) returning *;", 
                                         form['title'], data[0]['slug'], data[1]['slug'], form['message'], form.get('slug'), created)
             thread = dict(thread)
-            format_datetime(thread)
             return thread, 201
 
         except:
             thread = await conn.fetchrow("select id, title, author, votes, message, forum, slug, created from threads where slug = $1;", form['slug'])
             thread = dict(thread)
-            format_datetime(thread)
             return thread, 409
 
 async def create_post(app, ident, posts):
@@ -121,14 +115,13 @@ async def create_post(app, ident, posts):
                     error = {'message': 'thread not found'}
                     return error, 404
 
-                created = datetime.now()
+                created = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
                 query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false, null) " + \
                     "returning id, parent, author, forum, thread, message, created, edit;")
                 for i in range(len(posts)):
                     posts[i] = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
                                                     thread['forum'], thread['id'], posts[i]['message'], created)
                     posts[i] = dict(posts[i])
-                    format_datetime(posts[i])
                 return posts, 201
 
             except ForeignKeyViolationError:
@@ -145,7 +138,6 @@ async def get_thread(app, ident):
             thread = await conn.fetchrow("select id, forum, title, author, created, message, slug, votes from threads where {:s} = $1;".
                                          format(ident['name']), ident['value'])
             thread = dict(thread)
-            format_datetime(thread)
             return thread, 200
 
         except:
@@ -162,7 +154,6 @@ async def forum_threads(app, slug, limit, since, desc):
         else:
             query += "and created >= ${:d} ".format(counter)
 
-        since = datetime.strptime(since, '%Y-%m-%dT%H:%M:%S.%fZ')
         fields.append(since)
         counter += 1
 
@@ -180,7 +171,6 @@ async def forum_threads(app, slug, limit, since, desc):
 
         threads = await conn.fetch(query, slug, *fields)
         threads = list(map(dict, threads))
-        threads = list(map(format_datetime, threads))
         return threads, 200
 
 async def clear(app):
@@ -251,7 +241,6 @@ async def update_thread(app, ident, form):
                 return error, 404
 
             thread = dict(thread)
-            format_datetime(thread)
             return thread, 200
 
         except:
@@ -318,7 +307,6 @@ async def thread_posts(app, ident, limit, since, sort, desc):
 
         posts = await conn.fetch(query, thread['id'], *fields)
         posts = list(map(dict, posts))
-        posts = list(map(format_datetime, posts))
         return posts, 200
 
 async def forum_users(app, slug, limit, since, desc):
@@ -371,7 +359,6 @@ async def get_post(app, id, related):
             return error, 404
 
         post = dict(post)
-        format_datetime(post)
         post['isEdited'] = post.pop('edit')
         data['post'] = post
         if 'forum' in related:

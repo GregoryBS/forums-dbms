@@ -2,9 +2,6 @@ from aiohttp import web
 
 from . import usecases
 
-async def index(request):
-    return web.Response(text='Hello Aiohttp!')
-
 def get_slug_or_id(request):
     slug_or_id = request.match_info['slug_or_id']
     try:

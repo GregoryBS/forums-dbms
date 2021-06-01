@@ -23,7 +23,7 @@ create table threads (
     forum citext not null,
     message text not null,
     slug citext unique,
-    created timestamp,
+    created text,
     votes int,
     constraint to_user foreign key (author) references users(nickname) on delete cascade,
     constraint to_forum foreign key (forum) references forums(slug) on delete cascade
@@ -36,7 +36,7 @@ create table posts (
     forum citext not null,
     thread int not null,
     message text not null,
-    created timestamp,
+    created text,
     edit boolean,
     path bigint array,
     constraint to_user foreign key (author) references users(nickname) on delete cascade,
