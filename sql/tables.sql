@@ -68,11 +68,17 @@ execute function update_forum_threads();
 
 create function posts_path()
 returns trigger as $$
+declare
+    r record;
 begin 
     if NEW.parent = 0 then
         NEW.path = array[NEW.id];
     else
-        select array_append(path, NEW.id) from posts where id = NEW.parent into NEW.path;
+        select array_append(path, NEW.id) as pth, thread from posts where id = NEW.parent into r;
+        if r.thread != NEW.thread or NEW.parent not in (select id from posts) then
+            return null;
+        end if;
+        NEW.path = r.pth;
     end if;
     return NEW;
 end;
@@ -86,11 +92,9 @@ execute function posts_path();
 create function update_forum_posts()
 returns trigger as $$
 begin 
-    if NEW.parent = 0 or NEW.parent in (select id from posts) then
-        update forums set posts = posts + 1 where slug = NEW.forum;
-        return NEW;
-    end if;
-    return null;
+    update forums set posts = posts + 1 where slug = NEW.forum;
+    return NEW;
+
 end;
 $$ language plpgsql;
 

@@ -131,6 +131,10 @@ async def create_post(app, ident, posts):
                     format_datetime(posts[i])
                 return posts, 201
 
+            except ForeignKeyViolationError:
+                error = {'message': 'author not found'}
+                return error, 404
+
             except:
                 error = {'message': 'cannot create posts'}
                 return error, 409
@@ -149,30 +153,30 @@ async def get_thread(app, ident):
             return error, 404
 
 async def forum_threads(app, slug, limit, since, desc):
+    counter = 2
+    fields = []
+    query = "select id, forum, title, author, created, message, slug, votes from threads where forum = $1 "
+    if since:
+        if desc == 'true':
+            query += "and created <= ${:d} ".format(counter)
+        else:
+            query += "and created >= ${:d} ".format(counter)
+
+        since = datetime.strptime(since, '%Y-%m-%dT%H:%M:%S.%fZ')
+        fields.append(since)
+        counter += 1
+
+    query += "order by created "   
+    if desc == 'true':
+        query += "desc "
+    query += "limit ${:d};".format(counter)
+    fields.append(limit)
+
     async with app['db_pool'].acquire() as conn:
         forum = await conn.fetchrow("select slug from forums where slug = $1;", slug)
         if forum is None:
             error = {'message': 'forum not found'}
             return error, 404
-
-        counter = 2
-        fields = []
-        query = "select id, forum, title, author, created, message, slug, votes from threads where forum = $1 "
-        if since:
-            if desc == 'true':
-                query += "and created <= ${:d} ".format(counter)
-            else:
-                query += "and created >= ${:d} ".format(counter)
-
-            since = datetime.strptime(since, '%Y-%m-%dT%H:%M:%S.%fZ')
-            fields.append(since)
-            counter += 1
-
-        query += "order by created "   
-        if desc == 'true':
-            query += "desc "
-        query += "limit ${:d};".format(counter)
-        fields.append(limit)
 
         threads = await conn.fetch(query, slug, *fields)
         threads = list(map(dict, threads))
@@ -192,10 +196,12 @@ async def clear(app):
 async def status(app):
     async with app['db_pool'].acquire() as conn:
         try:
-            data = await conn.fetch("select relname, n_live_tup FROM pg_stat_user_tables where relname in ('users', 'forums', 'posts', 'threads');")
+            data = await conn.fetch("select count(nickname) from users union all select count(slug) from forums " + \
+                "union all select count(id) from threads union all select count(id) from posts;")
             response = {}
-            for row in data:
-                response[row['relname'][:-1]] = row['n_live_tup']
+            labels = ['user', 'forum', 'thread', 'post']
+            for i in range(len(data)):
+                response[labels[i]] = data[i].get('count')
             return response, 200
 
         except Exception as e:
@@ -206,6 +212,10 @@ async def new_vote(app, ident, vote):
     async with app['db_pool'].acquire() as conn:
         try:
             thread = await conn.fetchrow("select id from threads where {:s} = $1;".format(ident['name']), ident['value'])
+            if thread is None:
+                error = {'message': 'thread not found'}
+                return error, 404
+                
             await conn.execute("insert into votes values($1, $2, $3);", vote['nickname'], thread['id'], vote['voice'])
             return await get_thread(app, ident)
 
@@ -218,10 +228,24 @@ async def new_vote(app, ident, vote):
             return error, 404
 
 async def update_thread(app, ident, form):
+    query = "update threads set "
+    counter = 1
+    fields = []
+    if form.get('title'):
+        query += ("title = ${:d}".format(counter))
+        counter += 1
+        fields.append(form['title'])
+    if form.get('message'):
+        query += "," if counter > 1 else ""
+        query += ("message = ${:d}".format(counter))
+        counter += 1
+        fields.append(form['message'])
+    query += (" where {:s} = ${:d} returning *;".format(ident['name'], counter))
+    fields.append(ident['value'])
+
     async with app['db_pool'].acquire() as conn:
         try:
-            thread = await conn.fetchrow("update threads set title = $1, message = $2 where {:s} = $3 returning *;".format(ident['name']), 
-                                         form['title'], form['message'], ident['value'])
+            thread = await conn.fetchrow(query, *fields)
             if thread is None:
                 error = {'message': 'thread not found'}
                 return error, 404
@@ -237,7 +261,7 @@ async def update_thread(app, ident, form):
 async def thread_posts(app, ident, limit, since, sort, desc):
     counter = 2
     fields = []
-    query = "select id, parent, author, forum, thread, message, created, edit, path from posts where thread = $1 "
+    query = "select id, parent, author, forum, thread, message, created, edit from posts where thread = $1 "
 
     if sort == 'flat':
         if since:
@@ -296,3 +320,74 @@ async def thread_posts(app, ident, limit, since, sort, desc):
         posts = list(map(dict, posts))
         posts = list(map(format_datetime, posts))
         return posts, 200
+
+async def forum_users(app, slug, limit, since, desc):
+    query = "select u.nickname, u.fullname, u.email, u.about from users as u join posts as p on u.nickname = p.author where p.forum = $1 " + \
+        "union select u.nickname, u.fullname, u.email, u.about from users as u join threads as t on u.nickname = t.author where t.forum = $1;"
+
+    async with app['db_pool'].acquire() as conn:
+        forum = await conn.fetchrow("select slug from forums where slug = $1;", slug)
+        if forum is None:
+            error = {'message': 'forum not found'}
+            return error, 404
+
+        users = await conn.fetch(query, slug)
+        users = list(map(dict, users))
+        if since:
+            since = since.lower()
+            if desc == 'true':
+                users = list(filter(lambda x: x['nickname'].lower() < since, users))
+            else:
+                users = list(filter(lambda x: x['nickname'].lower() > since, users))
+        users.sort(key = lambda x: x['nickname'].lower(), reverse = (desc == 'true'))
+        return users[:limit], 200
+
+async def update_post(app, id, form):
+    post, status = await get_post(app, id, [])
+    if status != 200:
+        return post, status
+    post = post['post']
+    if form.get('message') is None or form.get('message') == post['message']:
+        return post, 200
+
+    async with app['db_pool'].acquire() as conn:
+        try:
+            await conn.execute("update posts set message = $1, edit = true where id = $2;", form['message'], id)
+
+            post['message'] = form['message']
+            post['isEdited'] = True
+            return post, 200
+
+        except:
+            error = {'message': 'thread cannot be updated'}
+            return error, 409
+
+async def get_post(app, id, related):
+    async with app['db_pool'].acquire() as conn:
+        data = {}
+        post = await conn.fetchrow("select id, parent, author, forum, thread, message, created, edit from posts where id = $1;", id)
+        if post is None:
+            error = {'message': 'post not found'}
+            return error, 404
+
+        post = dict(post)
+        format_datetime(post)
+        post['isEdited'] = post.pop('edit')
+        data['post'] = post
+        if 'forum' in related:
+            forum, status = await get_forum(app, post['forum'])
+            if status != 200:
+                return forum, status
+            data['forum'] = forum
+        if 'thread' in related:
+            thread, status = await get_thread(app, {'name': 'id', 'value': post['thread']})
+            if status != 200:
+                return thread, status
+            data['thread'] = thread
+        if 'user' in related:
+            author, status = await get_profile(app, post['author'])
+            if status != 200:
+                return author, status
+            data['author'] = author
+        
+        return data, 200

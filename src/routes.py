@@ -16,3 +16,6 @@ def setup_routes(app):
     app.router.add_post('/api/thread/{slug_or_id}/vote', thread_vote, name = 'new_vote')
     app.router.add_post('/api/thread/{slug_or_id}/details', update_thread, name = 'thread_update')
     app.router.add_get('/api/thread/{slug_or_id}/posts', get_thread_posts, name = 'thread_posts')
+    app.router.add_get('/api/forum/{slug}/users', get_forum_users, name = 'forum_users')
+    app.router.add_post('/api/post/{id}/details', update_post, name = 'update_post')
+    app.router.add_get('/api/post/{id}/details', get_post, name = 'post_details')

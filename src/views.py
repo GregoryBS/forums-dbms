@@ -70,11 +70,11 @@ async def get_forum_threads(request):
     return web.json_response(data, status = status)
 
 async def clear(request):
-    status = usecases.clear(request.app)
+    status = await usecases.clear(request.app)
     return web.json_response(None, status = status)
 
 async def get_status(request):
-    data, status = usecases.status(request.app)
+    data, status = await usecases.status(request.app)
     return web.json_response(data, status = status)
 
 async def thread_vote(request):
@@ -86,7 +86,10 @@ async def thread_vote(request):
 async def update_thread(request):
     slug_or_id = get_slug_or_id(request)
     data = await request.json()
-    data, status = await usecases.update_thread(request.app, slug_or_id, data)
+    if len(data) != 0:
+        data, status = await usecases.update_thread(request.app, slug_or_id, data)
+    else:
+        data, status = await usecases.get_thread(request.app, slug_or_id)
     return web.json_response(data, status = status)
 
 async def get_thread_posts(request):
@@ -96,4 +99,24 @@ async def get_thread_posts(request):
     sort = request.query.get('sort', 'flat')
     desc = request.query.get('desc', 'false')
     data, status = await usecases.thread_posts(request.app, slug_or_id, limit, since, sort, desc)
+    return web.json_response(data, status = status)
+
+async def get_forum_users(request):
+    slug = request.match_info['slug']
+    limit = int(request.query.get('limit', 100))
+    since = request.query.get('since')
+    desc = request.query.get('desc', 'false')
+    data, status = await usecases.forum_users(request.app, slug, limit, since, desc)
+    return web.json_response(data, status = status)
+
+async def update_post(request):
+    id = int(request.match_info['id'])
+    data = await request.json()
+    data, status = await usecases.update_post(request.app, id, data)
+    return web.json_response(data, status = status)
+
+async def get_post(request):
+    id = int(request.match_info['id'])
+    related = request.query.get('related', '').split(',')
+    data, status = await usecases.get_post(request.app, id, related)
     return web.json_response(data, status = status)
