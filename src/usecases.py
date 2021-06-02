@@ -115,30 +115,43 @@ async def create_thread(app, slug, form):
 
 async def create_post(app, ident, posts):
     async with app['db_pool'].acquire() as conn:
-        async with conn.transaction():
-            try:
-                thread = await conn.fetchrow("select id, forum from threads where {:s} = $1;".format(ident['name']), ident['value'])
-                if thread is None:
-                    error = {'message': 'thread not found'}
-                    return error, 404
-
-                created = datetime.now()
-                query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false, null) " + \
-                    "returning id, parent, author, forum, thread, message, created, edit;")
-                for i in range(len(posts)):
-                    posts[i] = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
-                                                    thread['forum'], thread['id'], posts[i]['message'], created)
-                    posts[i] = dict(posts[i])
-                    format_datetime(posts[i])
-                return posts, 201
-
-            except ForeignKeyViolationError:
-                error = {'message': 'author not found'}
+        try:
+            thread = await conn.fetchrow("select id, forum from threads where {:s} = $1;".format(ident['name']), ident['value'])
+            if thread is None:
+                error = {'message': 'thread not found'}
                 return error, 404
 
-            except:
-                error = {'message': 'cannot create posts'}
-                return error, 409
+            existed_posts = await conn.fetch("select id, thread, path from posts;")
+            if existed_posts is not None:
+                existed_posts = list(map(dict, existed_posts))
+
+                paths = []
+                for i in range(len(existed_posts)):
+                    paths.append(existed_posts[i].pop('path'))
+
+                for i in range(len(posts)):
+                    if posts[i].get('parent'):
+                        parent_index = existed_posts.index({'id': posts[i].get('parent'), 'thread': thread['id']})
+                        posts[i]['path'] = paths[parent_index]
+
+            created = datetime.now()
+            query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false, $7) returning id;")
+            for i in range(len(posts)):
+                result = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
+                                                thread['forum'], thread['id'], posts[i]['message'], created, posts[i].get('path', []))
+                posts[i]['id'] = result['id']
+                posts[i]['thread'] = thread['id']
+                posts[i]['forum'] = thread['forum']
+                posts[i]['created'] = created.isoformat()
+            return posts, 201
+
+        except ForeignKeyViolationError:
+            error = {'message': 'author not found'}
+            return error, 404
+
+        except:
+            error = {'message': 'cannot create posts'}
+            return error, 409
 
 async def get_thread(app, ident):
     async with app['db_pool'].acquire() as conn:
@@ -365,8 +378,8 @@ async def update_post(app, id, form):
             return error, 409
 
 async def get_post(app, id, related):
+    data = {}
     async with app['db_pool'].acquire() as conn:
-        data = {}
         post = await conn.fetchrow("select id, parent, author, forum, thread, message, created, edit from posts where id = $1;", id)
         if post is None:
             error = {'message': 'post not found'}
@@ -376,20 +389,21 @@ async def get_post(app, id, related):
         format_datetime(post)
         post['isEdited'] = post.pop('edit')
         data['post'] = post
-        if 'forum' in related:
-            forum, status = await get_forum(app, post['forum'])
-            if status != 200:
-                return forum, status
-            data['forum'] = forum
-        if 'thread' in related:
-            thread, status = await get_thread(app, {'name': 'id', 'value': post['thread']})
-            if status != 200:
-                return thread, status
-            data['thread'] = thread
-        if 'user' in related:
-            author, status = await get_profile(app, post['author'])
-            if status != 200:
-                return author, status
-            data['author'] = author
-        
-        return data, 200
+
+    if 'forum' in related:
+        forum, status = await get_forum(app, data['post']['forum'])
+        if status != 200:
+            return forum, status
+        data['forum'] = forum
+    if 'thread' in related:
+        thread, status = await get_thread(app, {'name': 'id', 'value': data['post']['thread']})
+        if status != 200:
+            return thread, status
+        data['thread'] = thread
+    if 'user' in related:
+        author, status = await get_profile(app, data['post']['author'])
+        if status != 200:
+            return author, status
+        data['author'] = author
+    
+    return data, 200

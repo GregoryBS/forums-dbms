@@ -29,8 +29,6 @@ create unlogged table threads (
     constraint to_forum foreign key (forum) references forums(slug) on delete cascade
 );
 
-create index thread_keys ON threads (id, slug, forum);
-
 create unlogged table posts (
     id bigserial primary key,
     parent bigint not null,
@@ -70,18 +68,8 @@ execute function update_forum_threads();
 
 create function posts_path()
 returns trigger as $$
-declare
-    r record;
 begin 
-    if NEW.parent = 0 then
-        NEW.path = array[NEW.id];
-    else
-        select array_append(path, NEW.id) as pth, thread from posts where id = NEW.parent into r;
-        if r.thread != NEW.thread or NEW.parent not in (select id from posts) then
-            return null;
-        end if;
-        NEW.path = r.pth;
-    end if;
+    NEW.path = array_append(NEW.path, NEW.id);
     return NEW;
 end;
 $$ language plpgsql;
@@ -123,3 +111,5 @@ create trigger new_thread_vote after insert or update
 on votes
 for each row
 execute function update_thread_votes();
+
+create index thread_keys ON threads(id, slug);
