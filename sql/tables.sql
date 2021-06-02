@@ -79,19 +79,6 @@ on posts
 for each row
 execute function posts_path();
 
-create function update_forum_posts()
-returns trigger as $$
-begin 
-    update forums set posts = posts + 1 where slug = NEW.forum;
-    return NEW;
-end;
-$$ language plpgsql;
-
-create trigger new_forum_post after insert
-on posts
-for each row
-execute function update_forum_posts();
-
 create function update_thread_votes()
 returns trigger as $$
 begin 
@@ -113,3 +100,5 @@ for each row
 execute function update_thread_votes();
 
 create index thread_keys ON threads(id, slug);
+create index hash_thread_key ON threads using hash (id);
+create index hash_post_key ON posts(id, thread, path);

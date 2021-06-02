@@ -115,43 +115,51 @@ async def create_thread(app, slug, form):
 
 async def create_post(app, ident, posts):
     async with app['db_pool'].acquire() as conn:
-        try:
-            thread = await conn.fetchrow("select id, forum from threads where {:s} = $1;".format(ident['name']), ident['value'])
-            if thread is None:
-                error = {'message': 'thread not found'}
+        async with conn.transaction():
+            try:
+                thread = await conn.fetchrow("select id, forum from threads where {:s} = $1;".format(ident['name']), ident['value'])
+                if thread is None:
+                    error = {'message': 'thread not found'}
+                    return error, 404
+
+                query = await conn.prepare("select thread, path from posts where id = $1;")
+                for post in posts:
+                    if post.get('parent'):
+                        result = await query.fetchrow(post.get('parent'))
+                        if result is None or result['thread'] != thread['id']:
+                            raise ValueError
+                        post['path'] = result['path']
+
+
+                created = datetime.now()
+                query = "insert into posts values (default, $1, $2, $3, $4, $5, $6, false, $7)"
+                for i in range(1, len(posts)):
+                    idx = [i * 7 + j for j in range(1, 8)]
+                    query += ",(default, ${:d}, ${:d}, ${:d}, ${:d}, ${:d}, ${:d}, false, ${:d})".format(*idx)
+                query += " returning id;"
+
+                fields = []
+                for post in posts:
+                    fields += [post.get('parent', 0), post['author'], thread['forum'], thread['id'], post['message'], created, post.get('path', [])]
+
+                if len(fields) > 0:
+                    result = await conn.fetch(query, *fields)
+                    result = list(map(dict, result))
+                    for i in range(len(posts)):
+                        posts[i]['id'] = result[i]['id']
+                        posts[i]['thread'] = thread['id']
+                        posts[i]['forum'] = thread['forum']
+                        posts[i]['created'] = created.isoformat()
+                    await conn.execute("update forums set posts = posts + {:d} where slug = $1;".format(len(posts)), thread['forum'])
+                return posts, 201
+
+            except ForeignKeyViolationError:
+                error = {'message': 'author not found'}
                 return error, 404
 
-            existed_posts = await conn.fetch("select id, thread, path from posts;")
-            if existed_posts is not None:
-                existed_posts = list(map(dict, existed_posts))
-
-                paths = []
-                for i in range(len(existed_posts)):
-                    paths.append(existed_posts[i].pop('path'))
-
-                for i in range(len(posts)):
-                    if posts[i].get('parent'):
-                        parent_index = existed_posts.index({'id': posts[i].get('parent'), 'thread': thread['id']})
-                        posts[i]['path'] = paths[parent_index]
-
-            created = datetime.now()
-            query = await conn.prepare("insert into posts values(default, $1, $2, $3, $4, $5, $6, false, $7) returning id;")
-            for i in range(len(posts)):
-                result = await query.fetchrow(posts[i].get('parent', 0), posts[i]['author'], 
-                                                thread['forum'], thread['id'], posts[i]['message'], created, posts[i].get('path', []))
-                posts[i]['id'] = result['id']
-                posts[i]['thread'] = thread['id']
-                posts[i]['forum'] = thread['forum']
-                posts[i]['created'] = created.isoformat()
-            return posts, 201
-
-        except ForeignKeyViolationError:
-            error = {'message': 'author not found'}
-            return error, 404
-
-        except:
-            error = {'message': 'cannot create posts'}
-            return error, 409
+            except:
+                error = {'message': 'cannot create posts'}
+                return error, 409
 
 async def get_thread(app, ident):
     async with app['db_pool'].acquire() as conn:
