@@ -100,10 +100,13 @@ for each row
 execute function update_thread_votes();
 
 create index hash_user_key ON users using hash (nickname);
-create index thread_keys ON threads(id, slug);
+create index thread_keys ON threads(slug, id);
 create index hash_thread_id ON threads using hash (id);
 create index hash_thread_slug ON threads using hash (slug);
-create index hash_thread_forum ON threads using hash (forum);
+create index thread_forum ON threads(forum);
+create index thread_forum ON threads(author);
 create index post_keys ON posts(id, path, thread);
 create index post_path ON posts(path);
+create index post_author ON posts(author);
+create index post_forum ON posts(forum);
 create index post_thread_parent ON posts(parent, thread);
