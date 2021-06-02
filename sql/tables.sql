@@ -1,13 +1,13 @@
 create extension if not exists citext; 
 
-create table users (
+create unlogged table users (
     nickname citext primary key,
     fullname text not null,
     email citext not null unique,
     about text
 );
 
-create table forums (
+create unlogged table forums (
     slug citext primary key,
     title text not null,
     author citext not null,
@@ -16,7 +16,7 @@ create table forums (
     constraint to_user foreign key (author) references users(nickname) on delete cascade
 );
 
-create table threads (
+create unlogged table threads (
     id serial primary key,
     title text not null,
     author citext not null,
@@ -29,7 +29,9 @@ create table threads (
     constraint to_forum foreign key (forum) references forums(slug) on delete cascade
 );
 
-create table posts (
+create index thread_keys ON threads (id, slug, forum);
+
+create unlogged table posts (
     id bigserial primary key,
     parent bigint not null,
     author citext not null,
@@ -44,7 +46,7 @@ create table posts (
     constraint to_thread foreign key (thread) references threads(id) on delete cascade
 );
 
-create table votes (
+create unlogged table votes (
     author citext,
     thread int,
     value smallint,
@@ -94,7 +96,6 @@ returns trigger as $$
 begin 
     update forums set posts = posts + 1 where slug = NEW.forum;
     return NEW;
-
 end;
 $$ language plpgsql;
 
