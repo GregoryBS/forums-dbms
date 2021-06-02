@@ -104,7 +104,7 @@ create index thread_keys ON threads(slug, id);
 create index hash_thread_id ON threads using hash (id);
 create index hash_thread_slug ON threads using hash (slug);
 create index thread_forum ON threads(forum);
-create index thread_forum ON threads(author);
+create index thread_author ON threads(author);
 create index post_keys ON posts(id, path, thread);
 create index post_path ON posts(path);
 create index post_author ON posts(author);
