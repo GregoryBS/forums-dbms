@@ -345,8 +345,24 @@ async def thread_posts(app, ident, limit, since, sort, desc):
         return posts, 200
 
 async def forum_users(app, slug, limit, since, desc):
-    query = "select u.nickname, u.fullname, u.email, u.about from users as u join posts as p on u.nickname = p.author where p.forum = $1 " + \
-        "union select u.nickname, u.fullname, u.email, u.about from users as u join threads as t on u.nickname = t.author where t.forum = $1;"
+    query = "select q.nickname, q.fullname, q.email, q.about from " + \
+        "(select u.nickname, u.fullname, u.email, u.about from users as u join posts as p on u.nickname = p.author where p.forum = $1 " + \
+        "union select u.nickname, u.fullname, u.email, u.about from users as u join threads as t on u.nickname = t.author where t.forum = $1) as q "
+    counter = 2
+    fields = []
+    if since:
+        since = since.lower()
+        if desc == 'true':
+            query += "where lower(q.nickname) < ${:d} ".format(counter)
+        else:
+            query += "where lower(q.nickname) > ${:d} ".format(counter)
+        counter += 1
+        fields.append(since)
+    query += "order by lower(q.nickname) "
+    if desc == 'true':
+        query += "desc "
+    query += "limit ${:d};".format(counter)
+    fields.append(limit)
 
     async with app['db_pool'].acquire() as conn:
         forum = await conn.fetchrow("select slug from forums where slug = $1;", slug)
@@ -354,16 +370,8 @@ async def forum_users(app, slug, limit, since, desc):
             error = {'message': 'forum not found'}
             return error, 404
 
-        users = await conn.fetch(query, slug)
-        users = list(map(dict, users))
-        if since:
-            since = since.lower()
-            if desc == 'true':
-                users = list(filter(lambda x: x['nickname'].lower() < since, users))
-            else:
-                users = list(filter(lambda x: x['nickname'].lower() > since, users))
-        users.sort(key = lambda x: x['nickname'].lower(), reverse = (desc == 'true'))
-        return users[:limit], 200
+        users = await conn.fetch(query, slug, *fields)
+        return list(map(dict, users)), 200
 
 async def update_post(app, id, form):
     post, status = await get_post(app, id, [])
