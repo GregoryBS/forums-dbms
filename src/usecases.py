@@ -345,20 +345,20 @@ async def thread_posts(app, ident, limit, since, sort, desc):
         return posts, 200
 
 async def forum_users(app, slug, limit, since, desc):
-    query = "select q.nickname, q.fullname, q.email, q.about from " + \
-        "(select u.nickname, u.fullname, u.email, u.about from users as u join posts as p on u.nickname = p.author where p.forum = $1 " + \
-        "union select u.nickname, u.fullname, u.email, u.about from users as u join threads as t on u.nickname = t.author where t.forum = $1) as q "
+    query = "select nickname, fullname, email, about from users where nickname in " + \
+        "(select author from posts where forum = $1 " + \
+        "union select author from threads where forum = $1) "
     counter = 2
     fields = []
     if since:
         since = since.lower()
         if desc == 'true':
-            query += "where lower(q.nickname) < ${:d} ".format(counter)
+            query += "and lower(nickname) < ${:d} ".format(counter)
         else:
-            query += "where lower(q.nickname) > ${:d} ".format(counter)
+            query += "and lower(nickname) > ${:d} ".format(counter)
         counter += 1
         fields.append(since)
-    query += "order by lower(q.nickname) "
+    query += "order by lower(nickname) "
     if desc == 'true':
         query += "desc "
     query += "limit ${:d};".format(counter)
