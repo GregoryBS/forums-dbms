@@ -576,6 +576,7 @@ func CreateThreadUsecase(thread *Thread) (*Thread, int) {
 	if thread.Created == timeNull {
 		thread.Created = time.Now()
 	}
+	thread.Created = thread.Created.Round(time.Microsecond)
 	row := db.Pool.QueryRow(ctx, "insert into threads values(default, $1, $2, $3, $4, nullif($5, ''), $6, 0) returning id, author, forum;",
 		thread.Title, keys[0], keys[1], thread.Message, thread.Slug, thread.Created)
 	err = row.Scan(&thread.ID, &thread.Author, &thread.Forum)
@@ -629,7 +630,7 @@ func CreatePostsUsecase(posts []*PostForm, slugID interface{}, flag bool) ([]*Po
 	}
 	query += " returning id, parent, author, message, edit;"
 
-	created := time.Now()
+	created := time.Now().Round(time.Microsecond)
 	fields := make([]interface{}, 0)
 	for i := range posts {
 		fields = append(fields, posts[i].Parent, posts[i].Author, forum, id, posts[i].Message, created, posts[i].Path)
@@ -675,6 +676,7 @@ func GetThreadUsecase(slugID interface{}, flag bool) (*Thread, int) {
 	if err != nil {
 		return nil, 404
 	}
+	thread.Created = thread.Created.Round(time.Microsecond)
 	if slug.Valid {
 		thread.Slug = slug.String
 	}
@@ -722,6 +724,7 @@ func ForumThreadsUsecase(forum string, limit int, since time.Time, desc string) 
 		if err != nil {
 			return nil, 500
 		}
+		thread.Created = thread.Created.Round(time.Microsecond)
 		if slug.Valid {
 			thread.Slug = slug.String
 		}
@@ -811,6 +814,7 @@ func UpdateThreadUsecase(thread *Thread, slugID interface{}, flag bool) (*Thread
 	if err != nil {
 		return nil, 404
 	}
+	thread.Created = thread.Created.Round(time.Microsecond)
 	if slug.Valid {
 		thread.Slug = slug.String
 	}
@@ -899,6 +903,7 @@ func ThreadPostsUsecase(slugID interface{}, flag bool, limit, since int, sort, d
 		if err != nil {
 			return nil, 500
 		}
+		p.Created = p.Created.Round(time.Microsecond)
 		result = append(result, p)
 	}
 	return result, 200
@@ -973,6 +978,7 @@ func GetPostUsecase(id int, related string) (*PostDetail, int) {
 	if err != nil {
 		return nil, 404
 	}
+	post.Created = post.Created.Round(time.Microsecond)
 	var forum *Forum
 	if strings.Contains(related, "forum") {
 		forum, _ = GetForumUsecase(post.Forum)
