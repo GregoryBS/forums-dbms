@@ -1,7 +1,15 @@
-FROM postgres:latest
+FROM golang:latest as build
 
-RUN apt-get update && apt-get install -y python3 python3-pip
-RUN pip3 install aiohttp asyncpg pyyaml
+WORKDIR /app
+
+COPY main.go main.go
+COPY go.mod go.mod
+
+RUN go mod tidy
+RUN go build -o main main.go
+
+
+FROM postgres:latest
 
 ENV POSTGRES_DB forums
 ENV POSTGRES_USER postgres
@@ -11,9 +19,11 @@ ENV PGVER 13
 USER $POSTGRES_USER
 
 WORKDIR /app
-COPY . .
 
-RUN pg_createcluster 13 main &&\
+COPY config.json config.json
+COPY sql/ sql/
+
+RUN pg_createcluster $PGVER main &&\
     service postgresql start &&\
     psql -U $POSTGRES_USER -f sql/role_db.sql &&\
     psql -U $POSTGRES_USER -d $POSTGRES_DB -f sql/tables.sql &&\
@@ -31,4 +41,6 @@ VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
 EXPOSE 5000
 
-CMD service postgresql start && python3 main.py
+COPY --from=build /app/main .
+
+CMD service postgresql start && ./main

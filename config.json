@@ -1,0 +1,6 @@
+{
+	"gzip": false,
+	"ports": {
+		"http": 5000
+	}
+}
