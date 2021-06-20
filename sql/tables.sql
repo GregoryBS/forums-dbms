@@ -53,10 +53,20 @@ create unlogged table votes (
     constraint to_thread foreign key (thread) references threads(id) on delete cascade
 );
 
+create unlogged table forum_users (
+    forum citext,
+    nickname citext,
+    fullname text,
+    email citext,
+    about text,
+    primary key (forum, nickname)
+);
+
 create function update_forum_threads()
 returns trigger as $$
 begin 
     update forums set threads = threads + 1 where slug = NEW.forum;
+    insert into forum_users select NEW.forum, nickname, fullname, email, about from users where nickname = NEW.author on conflict do nothing;
     return NEW;
 end;
 $$ language plpgsql;
@@ -101,10 +111,10 @@ execute function update_thread_votes();
 
 create index hash_user_key ON users using hash (nickname);
 create index thread_keys ON threads(slug, id);
+create index thread_forum_created on threads(forum, created);
 create index hash_thread_id ON threads using hash (id);
 create index hash_thread_slug ON threads using hash (slug);
-create index thread_forum_author ON threads(forum, author);
 create index post_keys ON posts(id, path, thread);
 create index post_path ON posts(path);
-create index post_forum_author ON posts(forum, author);
 create index post_thread_parent ON posts(parent, thread);
+create index forum_users_lower on forum_users(lower(nickname));

@@ -112,7 +112,18 @@ func main() {
 	app := aero.New()
 	app.OnStart(ConnectDB)
 	app.OnEnd(DisconnectDB)
-	configure(app).Run()
+
+	// counter := 0
+	// go func() {
+	// 	for {
+	// 		time.Sleep(time.Second)
+	// 		counter += 1
+	// 		fmt.Println(counter)
+	// 	}
+	// }()
+
+	app = configure(app)
+	app.Run()
 }
 
 func ConnectDB() {
@@ -152,6 +163,7 @@ func configure(app *aero.Application) *aero.Application {
 }
 
 func SignUp(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	user := &User{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), user); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -169,6 +181,7 @@ func SignUp(ctx aero.Context) error {
 }
 
 func Profile(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	nick := ctx.Get("nick")
 	response, status := ProfileUsecase(nick)
 	ctx.SetStatus(status)
@@ -179,6 +192,7 @@ func Profile(ctx aero.Context) error {
 }
 
 func UpdateProfile(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	user := &User{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), user); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -199,6 +213,7 @@ func UpdateProfile(ctx aero.Context) error {
 }
 
 func CreateForum(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	forum := &Forum{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), forum); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -215,6 +230,7 @@ func CreateForum(ctx aero.Context) error {
 }
 
 func GetForum(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	slug := ctx.Get("slug")
 	response, status := GetForumUsecase(slug)
 	ctx.SetStatus(status)
@@ -225,6 +241,7 @@ func GetForum(ctx aero.Context) error {
 }
 
 func CreateThread(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	thread := &Thread{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), thread); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -242,6 +259,7 @@ func CreateThread(ctx aero.Context) error {
 }
 
 func CreatePosts(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	posts := make([]*PostForm, 0)
 	if err := DecodeJSON(ctx.Request().Body().Reader(), &posts); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -272,6 +290,7 @@ func CreatePosts(ctx aero.Context) error {
 }
 
 func GetThread(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	slugID := ctx.Get("slug_or_id")
 	id, err := strconv.Atoi(slugID)
 	var thread *Thread
@@ -289,6 +308,7 @@ func GetThread(ctx aero.Context) error {
 }
 
 func ForumThreads(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	slug := ctx.Get("slug")
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
@@ -311,17 +331,20 @@ func ForumThreads(ctx aero.Context) error {
 }
 
 func Clear(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	status := ClearUsecase()
 	return ctx.Error(status)
 }
 
 func Status(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	response, status := StatusUsecase()
 	ctx.SetStatus(status)
 	return ctx.JSON(response)
 }
 
 func ThreadVote(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	vote := &Vote{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), vote); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -343,6 +366,7 @@ func ThreadVote(ctx aero.Context) error {
 }
 
 func UpdateThread(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	thread := &Thread{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), thread); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -369,6 +393,7 @@ func UpdateThread(ctx aero.Context) error {
 }
 
 func ThreadPosts(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
 	sinceParam := url.Query().Get("since")
@@ -402,6 +427,7 @@ func ThreadPosts(ctx aero.Context) error {
 }
 
 func ForumUsers(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	slug := ctx.Get("slug")
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
@@ -420,6 +446,7 @@ func ForumUsers(ctx aero.Context) error {
 }
 
 func UpdatePost(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	post := &PostForm{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), post); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -437,6 +464,7 @@ func UpdatePost(ctx aero.Context) error {
 }
 
 func GetPost(ctx aero.Context) error {
+	// fmt.Println(ctx.Path())
 	id, err := strconv.Atoi(ctx.Get("id"))
 	if err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -658,6 +686,17 @@ func CreatePostsUsecase(posts []*PostForm, slugID interface{}, flag bool) ([]*Po
 			result = append(result, post)
 		}
 		conn.Conn().Exec(ctx, fmt.Sprintf("update forums set posts = posts + %d where slug = $1;", len(posts)), forum)
+
+		fields = make([]interface{}, 1)
+		fields[0] = forum
+		query = "insert into forum_users select $1, nickname, fullname, email, about from users where nickname in ("
+		for i := range result {
+			query += fmt.Sprintf("$%d,", i+2)
+			fields = append(fields, result[i].Author)
+		}
+		query = strings.TrimSuffix(query, ",")
+		query += ") on conflict do nothing;"
+		conn.Conn().Exec(ctx, query, fields...)
 	}
 	return result, 201
 }
@@ -910,8 +949,7 @@ func ThreadPostsUsecase(slugID interface{}, flag bool, limit, since int, sort, d
 }
 
 func ForumUsersUsecase(slug string, limit int, since, desc string) ([]*User, int) {
-	query := `select nickname, fullname, email, about from users where nickname in 
-	(select author from posts where forum = $1 union select author from threads where forum = $1) `
+	query := `select nickname, fullname, email, about from forum_users where forum = $1 `
 	counter := 2
 	fields := make([]interface{}, 1)
 	fields[0] = slug
