@@ -133,14 +133,19 @@ async def create_post(app, ident, posts):
 
                 created = datetime.now()
                 query = "insert into posts values (default, $1, $2, $3, $4, $5, $6, false, $7)"
+                query2 = "insert into forum_users select $1, nickname, fullname, email, about from users where nickname in ($2"
                 for i in range(1, len(posts)):
                     idx = [i * 7 + j for j in range(1, 8)]
                     query += ",(default, ${:d}, ${:d}, ${:d}, ${:d}, ${:d}, ${:d}, false, ${:d})".format(*idx)
+                    query2 += ",${:d}".format(i + 2)
                 query += " returning id;"
+                query2 += ") on conflict do nothing;"
 
                 fields = []
+                fu = []
                 for post in posts:
                     fields += [post.get('parent', 0), post['author'], thread['forum'], thread['id'], post['message'], created, post.get('path', [])]
+                    fu.append(post['author'])
 
                 if len(fields) > 0:
                     result = await conn.fetch(query, *fields)
@@ -151,6 +156,7 @@ async def create_post(app, ident, posts):
                         posts[i]['forum'] = thread['forum']
                         posts[i]['created'] = created.isoformat()
                     await conn.execute("update forums set posts = posts + {:d} where slug = $1;".format(len(posts)), thread['forum'])
+                    await conn.execute(query2, thread['forum'], *fu)
                 return posts, 201
 
             except ForeignKeyViolationError:
@@ -345,9 +351,7 @@ async def thread_posts(app, ident, limit, since, sort, desc):
         return posts, 200
 
 async def forum_users(app, slug, limit, since, desc):
-    query = "select nickname, fullname, email, about from users where nickname in " + \
-        "(select author from posts where forum = $1 " + \
-        "union select author from threads where forum = $1) "
+    query = "select nickname, fullname, email, about from forum_users where forum = $1 "
     counter = 2
     fields = []
     if since:

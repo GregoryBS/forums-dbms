@@ -1,34 +1,38 @@
-FROM golang:latest as build
+# FROM golang:latest as build
 
-WORKDIR /app
+# WORKDIR /app
 
-COPY main.go main.go
-COPY go.mod go.mod
+# COPY main.go main.go
+# COPY go.mod go.mod
 
-RUN go mod tidy
-RUN go build -o main main.go
+# RUN go mod tidy
+# RUN go build -o main main.go
 
 
-FROM ubuntu:latest
-ENV TZ=Europe/Moscow
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+FROM postgres:latest
+# ENV TZ=Europe/Moscow
+# RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-ENV DEBIAN_FRONTEND=noninteractive
+# ENV DEBIAN_FRONTEND=noninteractive
 ENV POSTGRES_DB forums
 ENV POSTGRES_USER postgres
 ENV POSTGRES_PASSWORD password
-ENV PGVER 12
+ENV PGVER 13
 
-RUN apt-get update && apt-get install -y postgresql-$PGVER
+# RUN apt-get update && apt-get install -y postgresql-$PGVER 
+RUN apt-get update && apt-get install -y python3 python3-pip
+RUN pip3 install aiohttp asyncpg pyyaml
 
 USER $POSTGRES_USER
 
 WORKDIR /app
 
-COPY config.json config.json
-COPY sql/ sql/
+# COPY config.json config.json
+# COPY sql/ sql/
+COPY . .
 
-RUN service postgresql start &&\
+RUN pg_createcluster 13 main &&\
+    service postgresql start &&\
     psql -U $POSTGRES_USER -f sql/role_db.sql &&\
     psql -U $POSTGRES_USER -d $POSTGRES_DB -f sql/tables.sql &&\
     service postgresql stop
@@ -50,6 +54,7 @@ VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
 EXPOSE 5000
 
-COPY --from=build /app/main .
+# COPY --from=build /app/main .
 
-CMD service postgresql start && ./main
+# CMD service postgresql start && ./main
+CMD service postgresql start && python3 main.py
