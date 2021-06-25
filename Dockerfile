@@ -39,6 +39,11 @@ RUN echo "synchronous_commit=off" >> /etc/postgresql/$PGVER/main/postgresql.conf
     echo "maintenance_work_mem=256MB" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
     echo "shared_buffers=768MB" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
     echo "full_page_writes=off" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
+    echo "random_page_cost=1" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
+    echo "wal_writer_delay=20" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
+    echo "cpu_tuple_cost=0.003" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
+    echo "cpu_index_tuple_cost=0.001" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
+    echo "cpu_operator_cost=0.0005" >> /etc/postgresql/$PGVER/main/postgresql.conf &&\
     echo "unix_socket_directories = '/var/run/postgresql'" >> /etc/postgresql/$PGVER/main/postgresql.conf
 
 VOLUME  ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]

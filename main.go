@@ -26,6 +26,14 @@ type DBManager struct {
 	Pool *pgxpool.Pool
 }
 
+type Usecase struct {
+	db *DBManager
+}
+
+type Handler struct {
+	u *Usecase
+}
+
 type JSONError struct {
 	Message string `json:"message,omitempty"`
 }
@@ -99,7 +107,6 @@ type Counter struct {
 }
 
 var (
-	db       = &DBManager{}
 	timeNull = time.Time{}
 	stat     = make([]Counter, 4)
 )
@@ -110,8 +117,13 @@ func DecodeJSON(body io.Reader, dst interface{}) error {
 
 func main() {
 	app := aero.New()
-	app.OnStart(ConnectDB)
-	app.OnEnd(DisconnectDB)
+	db := ConnectDB()
+	usecases := &Usecase{db}
+	handlers := &Handler{usecases}
+
+	app.OnEnd(func() {
+		DisconnectDB(db)
+	})
 
 	// counter := 0
 	// go func() {
@@ -122,54 +134,67 @@ func main() {
 	// 	}
 	// }()
 
-	app = configure(app)
+	// app.Use(func(next aero.Handler) aero.Handler {
+	// 	return func(ctx aero.Context) error {
+	// 		start := time.Now()
+	// 		err := next(ctx)
+	// 		fmt.Println(ctx.Path(), err, time.Since(start))
+
+	// 		return err
+	// 	}
+	// })
+
+	app = configure(app, handlers)
 	app.Run()
 }
 
-func ConnectDB() {
+func ConnectDB() *DBManager {
 	config, _ := pgxpool.ParseConfig("host=localhost port=5432 database=forums user=anna password=yoh")
 	config.MinConns = 50
-	config.MaxConns = 75
+	config.MaxConns = 50
 	config.ConnConfig.PreferSimpleProtocol = true
+	config.ConnConfig.RuntimeParams = map[string]string{
+		"standard_conforming_strings": "on",
+	}
 	pool, err := pgxpool.ConnectConfig(context.Background(), config)
 	if err == nil {
-		db.Pool = pool
+		return &DBManager{pool}
 	}
+	return nil
 }
 
-func DisconnectDB() {
+func DisconnectDB(db *DBManager) {
 	db.Pool.Close()
 }
 
-func configure(app *aero.Application) *aero.Application {
-	app.Post("/api/user/:nick/create", SignUp)
-	app.Get("/api/user/:nick/profile", Profile)
-	app.Post("/api/user/:nick/profile", UpdateProfile)
-	app.Post("/api/forum/create", CreateForum)
-	app.Get("/api/forum/:slug/details", GetForum)
-	app.Post("/api/forum/:slug/create", CreateThread)
-	app.Post("/api/thread/:slug_or_id/create", CreatePosts)
-	app.Get("/api/thread/:slug_or_id/details", GetThread)
-	app.Get("/api/forum/:slug/threads", ForumThreads)
-	app.Post("/api/service/clear", Clear)
-	app.Get("/api/service/status", Status)
-	app.Post("/api/thread/:slug_or_id/vote", ThreadVote)
-	app.Post("/api/thread/:slug_or_id/details", UpdateThread)
-	app.Get("/api/thread/:slug_or_id/posts", ThreadPosts)
-	app.Get("/api/forum/:slug/users", ForumUsers)
-	app.Post("/api/post/:id/details", UpdatePost)
-	app.Get("/api/post/:id/details", GetPost)
+func configure(app *aero.Application, handlers *Handler) *aero.Application {
+	app.Post("/api/user/:nick/create", handlers.SignUp)
+	app.Get("/api/user/:nick/profile", handlers.Profile)
+	app.Post("/api/user/:nick/profile", handlers.UpdateProfile)
+	app.Post("/api/forum/create", handlers.CreateForum)
+	app.Get("/api/forum/:slug/details", handlers.GetForum)
+	app.Post("/api/forum/:slug/create", handlers.CreateThread)
+	app.Post("/api/thread/:slug_or_id/create", handlers.CreatePosts)
+	app.Get("/api/thread/:slug_or_id/details", handlers.GetThread)
+	app.Get("/api/forum/:slug/threads", handlers.ForumThreads)
+	app.Post("/api/service/clear", handlers.Clear)
+	app.Get("/api/service/status", handlers.Status)
+	app.Post("/api/thread/:slug_or_id/vote", handlers.ThreadVote)
+	app.Post("/api/thread/:slug_or_id/details", handlers.UpdateThread)
+	app.Get("/api/thread/:slug_or_id/posts", handlers.ThreadPosts)
+	app.Get("/api/forum/:slug/users", handlers.ForumUsers)
+	app.Post("/api/post/:id/details", handlers.UpdatePost)
+	app.Get("/api/post/:id/details", handlers.GetPost)
 	return app
 }
 
-func SignUp(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) SignUp(ctx aero.Context) error {
 	user := &User{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), user); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
 	user.Nick = ctx.Get("nick")
-	response, status := SignUpUsecase(user)
+	response, status := h.u.SignUp(user)
 	ctx.SetStatus(status)
 	if status == http.StatusCreated {
 		stat[3].Lock()
@@ -180,10 +205,9 @@ func SignUp(ctx aero.Context) error {
 	return ctx.JSON(response)
 }
 
-func Profile(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) Profile(ctx aero.Context) error {
 	nick := ctx.Get("nick")
-	response, status := ProfileUsecase(nick)
+	response, status := h.u.Profile(nick)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -191,14 +215,13 @@ func Profile(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"user not found"})
 }
 
-func UpdateProfile(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) UpdateProfile(ctx aero.Context) error {
 	user := &User{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), user); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
 	user.Nick = ctx.Get("nick")
-	response, status := UpdateProfileUsecase(user)
+	response, status := h.u.UpdateProfile(user)
 	ctx.SetStatus(status)
 	switch status {
 	case http.StatusOK:
@@ -212,13 +235,12 @@ func UpdateProfile(ctx aero.Context) error {
 	}
 }
 
-func CreateForum(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) CreateForum(ctx aero.Context) error {
 	forum := &Forum{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), forum); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
-	response, status := CreateForumUsecase(forum)
+	response, status := h.u.CreateForum(forum)
 	ctx.SetStatus(status)
 	if status == http.StatusNotFound {
 		return ctx.JSON(&JSONError{"user not found"})
@@ -229,10 +251,9 @@ func CreateForum(ctx aero.Context) error {
 	return ctx.JSON(response)
 }
 
-func GetForum(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) GetForum(ctx aero.Context) error {
 	slug := ctx.Get("slug")
-	response, status := GetForumUsecase(slug)
+	response, status := h.u.GetForum(slug)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -240,14 +261,13 @@ func GetForum(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"forum not found"})
 }
 
-func CreateThread(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) CreateThread(ctx aero.Context) error {
 	thread := &Thread{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), thread); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
 	thread.Forum = ctx.Get("slug")
-	response, status := CreateThreadUsecase(thread)
+	response, status := h.u.CreateThread(thread)
 	ctx.SetStatus(status)
 	if status == http.StatusNotFound {
 		return ctx.JSON(&JSONError{"user or forum not found"})
@@ -258,8 +278,7 @@ func CreateThread(ctx aero.Context) error {
 	return ctx.JSON(response)
 }
 
-func CreatePosts(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) CreatePosts(ctx aero.Context) error {
 	posts := make([]*PostForm, 0)
 	if err := DecodeJSON(ctx.Request().Body().Reader(), &posts); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -269,9 +288,9 @@ func CreatePosts(ctx aero.Context) error {
 	var status int
 	response := make([]*Post, 0)
 	if err == nil {
-		response, status = CreatePostsUsecase(posts, id, true)
+		response, status = h.u.CreatePosts(posts, id, true)
 	} else {
-		response, status = CreatePostsUsecase(posts, slugID, false)
+		response, status = h.u.CreatePosts(posts, slugID, false)
 	}
 	ctx.SetStatus(status)
 	switch status {
@@ -289,16 +308,15 @@ func CreatePosts(ctx aero.Context) error {
 	}
 }
 
-func GetThread(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) GetThread(ctx aero.Context) error {
 	slugID := ctx.Get("slug_or_id")
 	id, err := strconv.Atoi(slugID)
 	var thread *Thread
 	var status int
 	if err == nil {
-		thread, status = GetThreadUsecase(id, true)
+		thread, status = h.u.GetThread(id, true)
 	} else {
-		thread, status = GetThreadUsecase(slugID, false)
+		thread, status = h.u.GetThread(slugID, false)
 	}
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
@@ -307,8 +325,7 @@ func GetThread(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"thread not found"})
 }
 
-func ForumThreads(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) ForumThreads(ctx aero.Context) error {
 	slug := ctx.Get("slug")
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
@@ -322,7 +339,7 @@ func ForumThreads(ctx aero.Context) error {
 	if err != nil {
 		since = timeNull
 	}
-	response, status := ForumThreadsUsecase(slug, limit, since, desc)
+	response, status := h.u.ForumThreads(slug, limit, since, desc)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -330,21 +347,18 @@ func ForumThreads(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"forum not found"})
 }
 
-func Clear(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
-	status := ClearUsecase()
+func (h *Handler) Clear(ctx aero.Context) error {
+	status := h.u.Clear()
 	return ctx.Error(status)
 }
 
-func Status(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
-	response, status := StatusUsecase()
+func (h *Handler) Status(ctx aero.Context) error {
+	response, status := h.u.Status()
 	ctx.SetStatus(status)
 	return ctx.JSON(response)
 }
 
-func ThreadVote(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) ThreadVote(ctx aero.Context) error {
 	vote := &Vote{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), vote); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -354,9 +368,9 @@ func ThreadVote(ctx aero.Context) error {
 	var thread *Thread
 	var status int
 	if err == nil {
-		thread, status = ThreadVoteUsecase(vote, id, true)
+		thread, status = h.u.ThreadVote(vote, id, true)
 	} else {
-		thread, status = ThreadVoteUsecase(vote, slugID, false)
+		thread, status = h.u.ThreadVote(vote, slugID, false)
 	}
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
@@ -365,8 +379,7 @@ func ThreadVote(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"user or thread not found"})
 }
 
-func UpdateThread(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) UpdateThread(ctx aero.Context) error {
 	thread := &Thread{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), thread); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -375,9 +388,9 @@ func UpdateThread(ctx aero.Context) error {
 	id, err := strconv.Atoi(slugID)
 	var status int
 	if err == nil {
-		thread, status = UpdateThreadUsecase(thread, id, true)
+		thread, status = h.u.UpdateThread(thread, id, true)
 	} else {
-		thread, status = UpdateThreadUsecase(thread, slugID, false)
+		thread, status = h.u.UpdateThread(thread, slugID, false)
 	}
 	ctx.SetStatus(status)
 	switch status {
@@ -392,8 +405,7 @@ func UpdateThread(ctx aero.Context) error {
 	}
 }
 
-func ThreadPosts(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) ThreadPosts(ctx aero.Context) error {
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
 	sinceParam := url.Query().Get("since")
@@ -415,9 +427,9 @@ func ThreadPosts(ctx aero.Context) error {
 	var response []*Post
 	var status int
 	if err == nil {
-		response, status = ThreadPostsUsecase(id, true, limit, since, sort, desc)
+		response, status = h.u.ThreadPosts(id, true, limit, since, sort, desc)
 	} else {
-		response, status = ThreadPostsUsecase(slugID, false, limit, since, sort, desc)
+		response, status = h.u.ThreadPosts(slugID, false, limit, since, sort, desc)
 	}
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
@@ -426,8 +438,7 @@ func ThreadPosts(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"thread not found"})
 }
 
-func ForumUsers(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) ForumUsers(ctx aero.Context) error {
 	slug := ctx.Get("slug")
 	url := ctx.Request().Internal().URL
 	limitParam := url.Query().Get("limit")
@@ -437,7 +448,7 @@ func ForumUsers(ctx aero.Context) error {
 	if err != nil {
 		limit = 100
 	}
-	response, status := ForumUsersUsecase(slug, limit, since, desc)
+	response, status := h.u.ForumUsers(slug, limit, since, desc)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -445,8 +456,7 @@ func ForumUsers(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"forum not found"})
 }
 
-func UpdatePost(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) UpdatePost(ctx aero.Context) error {
 	post := &PostForm{}
 	if err := DecodeJSON(ctx.Request().Body().Reader(), post); err != nil {
 		return ctx.Error(http.StatusInternalServerError)
@@ -455,7 +465,7 @@ func UpdatePost(ctx aero.Context) error {
 	if err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
-	response, status := UpdatePostUsecase(post, id)
+	response, status := h.u.UpdatePost(post, id)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -463,14 +473,13 @@ func UpdatePost(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"post not found"})
 }
 
-func GetPost(ctx aero.Context) error {
-	// fmt.Println(ctx.Path())
+func (h *Handler) GetPost(ctx aero.Context) error {
 	id, err := strconv.Atoi(ctx.Get("id"))
 	if err != nil {
 		return ctx.Error(http.StatusInternalServerError)
 	}
 	related := ctx.Request().Internal().URL.Query().Get("related")
-	response, status := GetPostUsecase(id, related)
+	response, status := h.u.GetPost(id, related)
 	ctx.SetStatus(status)
 	if status == http.StatusOK {
 		return ctx.JSON(response)
@@ -478,12 +487,12 @@ func GetPost(ctx aero.Context) error {
 	return ctx.JSON(&JSONError{"post not found"})
 }
 
-func SignUpUsecase(user *User) ([]*User, int) {
+func (u *Usecase) SignUp(user *User) ([]*User, int) {
 	ctx := context.Background()
 	result := make([]*User, 0)
-	_, err := db.Pool.Exec(ctx, "insert into users values($1, $2, $3, $4);", user.Nick, user.Fullname, user.Email, user.About)
+	_, err := u.db.Pool.Exec(ctx, "insert into users values($1, $2, $3, $4);", user.Nick, user.Fullname, user.Email, user.About)
 	if err != nil {
-		rows, err := db.Pool.Query(ctx, "select nickname, fullname, email, about from users where nickname = $1 or email = $2;", user.Nick, user.Email)
+		rows, err := u.db.Pool.Query(ctx, "select nickname, fullname, email, about from users where nickname = $1 or email = $2;", user.Nick, user.Email)
 		if err != nil {
 			fmt.Println("creating user error: ", err)
 			return nil, 500
@@ -505,9 +514,9 @@ func SignUpUsecase(user *User) ([]*User, int) {
 	return result, 201
 }
 
-func ProfileUsecase(nick string) (*User, int) {
+func (u *Usecase) Profile(nick string) (*User, int) {
 	user := &User{}
-	row := db.Pool.QueryRow(context.Background(), "select nickname, fullname, email, about from users where nickname = $1;", nick)
+	row := u.db.Pool.QueryRow(context.Background(), "select nickname, fullname, email, about from users where nickname = $1;", nick)
 	err := row.Scan(&user.Nick, &user.Fullname, &user.Email, &user.About)
 	if err == nil {
 		return user, 200
@@ -515,7 +524,7 @@ func ProfileUsecase(nick string) (*User, int) {
 	return nil, 404
 }
 
-func UpdateProfileUsecase(user *User) (*User, int) {
+func (u *Usecase) UpdateProfile(user *User) (*User, int) {
 	counter := 1
 	fields := make([]interface{}, 0)
 	query := "update users set "
@@ -541,11 +550,11 @@ func UpdateProfileUsecase(user *User) (*User, int) {
 		counter += 1
 	}
 	if counter == 1 {
-		return ProfileUsecase(user.Nick)
+		return u.Profile(user.Nick)
 	}
 	query += fmt.Sprintf(" where nickname = $%d returning *;", counter)
 	fields = append(fields, user.Nick)
-	row := db.Pool.QueryRow(context.Background(), query, fields...)
+	row := u.db.Pool.QueryRow(context.Background(), query, fields...)
 	var nick, full, email, about string
 	err := row.Scan(&nick, &full, &email, &about)
 	if err == nil {
@@ -556,33 +565,33 @@ func UpdateProfileUsecase(user *User) (*User, int) {
 	return nil, 409
 }
 
-func CreateForumUsecase(forum *Forum) (*Forum, int) {
+func (u *Usecase) CreateForum(forum *Forum) (*Forum, int) {
 	ctx := context.Background()
-	row := db.Pool.QueryRow(ctx, "select nickname from users where nickname = $1;", forum.User)
+	row := u.db.Pool.QueryRow(ctx, "select nickname from users where nickname = $1;", forum.User)
 	if err := row.Scan(&forum.User); err != nil {
 		return nil, 404
 	}
 
-	row = db.Pool.QueryRow(ctx, "insert into forums values($1, $2, $3, 0, 0) returning *;", forum.Slug, forum.Title, forum.User)
+	row = u.db.Pool.QueryRow(ctx, "insert into forums values($1, $2, $3, 0, 0) returning *;", forum.Slug, forum.Title, forum.User)
 	if err := row.Scan(&forum.Slug, &forum.Title, &forum.User, &forum.Threads, &forum.Posts); err != nil {
-		forum, _ = GetForumUsecase(forum.Slug)
+		forum, _ = u.GetForum(forum.Slug)
 		return forum, 409
 	}
 	return forum, 201
 }
 
-func GetForumUsecase(slug string) (*Forum, int) {
+func (u *Usecase) GetForum(slug string) (*Forum, int) {
 	forum := &Forum{}
-	row := db.Pool.QueryRow(context.Background(), "select slug, title, author, threads, posts from forums where slug = $1;", slug)
+	row := u.db.Pool.QueryRow(context.Background(), "select slug, title, author, threads, posts from forums where slug = $1;", slug)
 	if err := row.Scan(&forum.Slug, &forum.Title, &forum.User, &forum.Threads, &forum.Posts); err != nil {
 		return nil, 404
 	}
 	return forum, 200
 }
 
-func CreateThreadUsecase(thread *Thread) (*Thread, int) {
+func (u *Usecase) CreateThread(thread *Thread) (*Thread, int) {
 	ctx := context.Background()
-	rows, err := db.Pool.Query(ctx, "select nickname as slug from users where nickname = $1 union all select slug from forums where slug = $2;",
+	rows, err := u.db.Pool.Query(ctx, "select nickname as slug from users where nickname = $1 union all select slug from forums where slug = $2;",
 		thread.Author, thread.Forum)
 	if err != nil {
 		return nil, 404
@@ -605,31 +614,31 @@ func CreateThreadUsecase(thread *Thread) (*Thread, int) {
 		thread.Created = time.Now()
 	}
 	thread.Created = thread.Created.Round(time.Microsecond)
-	row := db.Pool.QueryRow(ctx, "insert into threads values(default, $1, $2, $3, $4, nullif($5, ''), $6, 0) returning id, author, forum;",
+	row := u.db.Pool.QueryRow(ctx, "insert into threads values(default, $1, $2, $3, $4, nullif($5, ''), $6, 0) returning id, author, forum;",
 		thread.Title, keys[0], keys[1], thread.Message, thread.Slug, thread.Created)
 	err = row.Scan(&thread.ID, &thread.Author, &thread.Forum)
 	if err != nil {
-		thread, _ = GetThreadUsecase(thread.Slug, false)
+		thread, _ = u.GetThread(thread.Slug, false)
 		return thread, 409
 	}
 	return thread, 201
 }
 
-func CreatePostsUsecase(posts []*PostForm, slugID interface{}, flag bool) ([]*Post, int) {
+func (u *Usecase) CreatePosts(posts []*PostForm, slugID interface{}, flag bool) ([]*Post, int) {
 	ctx := context.Background()
 	var row pgx.Row
 	var id int
 	var forum string
 	if flag {
-		row = db.Pool.QueryRow(ctx, "select id, forum from threads where id = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id, forum from threads where id = $1;", slugID)
 	} else {
-		row = db.Pool.QueryRow(ctx, "select id, forum from threads where slug = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id, forum from threads where slug = $1;", slugID)
 	}
 	if err := row.Scan(&id, &forum); err != nil {
 		return nil, 404
 	}
 
-	conn, err := db.Pool.Acquire(ctx)
+	conn, err := u.db.Pool.Acquire(ctx)
 	if err != nil {
 		return nil, 500
 	}
@@ -701,13 +710,13 @@ func CreatePostsUsecase(posts []*PostForm, slugID interface{}, flag bool) ([]*Po
 	return result, 201
 }
 
-func GetThreadUsecase(slugID interface{}, flag bool) (*Thread, int) {
+func (u *Usecase) GetThread(slugID interface{}, flag bool) (*Thread, int) {
 	ctx := context.Background()
 	var row pgx.Row
 	if flag {
-		row = db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where id = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where id = $1;", slugID)
 	} else {
-		row = db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where slug = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where slug = $1;", slugID)
 	}
 	thread := &Thread{}
 	var slug sql.NullString
@@ -722,7 +731,7 @@ func GetThreadUsecase(slugID interface{}, flag bool) (*Thread, int) {
 	return thread, 200
 }
 
-func ForumThreadsUsecase(forum string, limit int, since time.Time, desc string) ([]*Thread, int) {
+func (u *Usecase) ForumThreads(forum string, limit int, since time.Time, desc string) ([]*Thread, int) {
 	counter := 2
 	fields := make([]interface{}, 1)
 	fields[0] = forum
@@ -745,11 +754,11 @@ func ForumThreadsUsecase(forum string, limit int, since time.Time, desc string) 
 	fields = append(fields, limit)
 
 	ctx := context.Background()
-	row := db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", forum)
+	row := u.db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", forum)
 	if err := row.Scan(&forum); err != nil {
 		return nil, 404
 	}
-	rows, err := db.Pool.Query(ctx, query, fields...)
+	rows, err := u.db.Pool.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -772,8 +781,8 @@ func ForumThreadsUsecase(forum string, limit int, since time.Time, desc string) 
 	return result, 200
 }
 
-func ClearUsecase() int {
-	_, err := db.Pool.Exec(context.Background(), "truncate users cascade;")
+func (u *Usecase) Clear() int {
+	_, err := u.db.Pool.Exec(context.Background(), "truncate users cascade;")
 	if err != nil {
 		return 500
 	}
@@ -785,7 +794,7 @@ func ClearUsecase() int {
 	return 200
 }
 
-func StatusUsecase() (*DBStatus, int) {
+func (u *Usecase) Status() (*DBStatus, int) {
 	for i := range stat {
 		stat[i].Lock()
 	}
@@ -796,31 +805,31 @@ func StatusUsecase() (*DBStatus, int) {
 	return result, 200
 }
 
-func ThreadVoteUsecase(vote *Vote, slugID interface{}, flag bool) (*Thread, int) {
+func (u *Usecase) ThreadVote(vote *Vote, slugID interface{}, flag bool) (*Thread, int) {
 	ctx := context.Background()
 	var row pgx.Row
 	var id int
 	if flag {
-		row = db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
 	} else {
-		row = db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
 	}
 	if err := row.Scan(&id); err != nil {
 		return nil, 404
 	}
 
-	_, err := db.Pool.Exec(ctx, "insert into votes values($1, $2, $3);", vote.Author, id, vote.Voice)
+	_, err := u.db.Pool.Exec(ctx, "insert into votes values($1, $2, $3);", vote.Author, id, vote.Voice)
 	if pgerr, ok := err.(*pgconn.PgError); ok {
 		if pgerr.Code == "23505" {
-			db.Pool.Exec(ctx, "update votes set value = $1 where author = $2 and thread = $3;", vote.Voice, vote.Author, id)
+			u.db.Pool.Exec(ctx, "update votes set value = $1 where author = $2 and thread = $3;", vote.Voice, vote.Author, id)
 		} else {
 			return nil, 404
 		}
 	}
-	return GetThreadUsecase(id, true)
+	return u.GetThread(id, true)
 }
 
-func UpdateThreadUsecase(thread *Thread, slugID interface{}, flag bool) (*Thread, int) {
+func (u *Usecase) UpdateThread(thread *Thread, slugID interface{}, flag bool) (*Thread, int) {
 	counter := 1
 	fields := make([]interface{}, 0)
 	query := "update threads set "
@@ -838,7 +847,7 @@ func UpdateThreadUsecase(thread *Thread, slugID interface{}, flag bool) (*Thread
 		counter += 1
 	}
 	if counter == 1 {
-		return GetThreadUsecase(slugID, flag)
+		return u.GetThread(slugID, flag)
 	}
 	if flag {
 		query += fmt.Sprintf(" where id = $%d returning *;", counter)
@@ -847,7 +856,7 @@ func UpdateThreadUsecase(thread *Thread, slugID interface{}, flag bool) (*Thread
 	}
 	fields = append(fields, slugID)
 
-	row := db.Pool.QueryRow(context.Background(), query, fields...)
+	row := u.db.Pool.QueryRow(context.Background(), query, fields...)
 	var slug sql.NullString
 	err := row.Scan(&thread.ID, &thread.Title, &thread.Author, &thread.Forum, &thread.Message, &slug, &thread.Created, &thread.Votes)
 	if err != nil {
@@ -860,14 +869,14 @@ func UpdateThreadUsecase(thread *Thread, slugID interface{}, flag bool) (*Thread
 	return thread, 200
 }
 
-func ThreadPostsUsecase(slugID interface{}, flag bool, limit, since int, sort, desc string) ([]*Post, int) {
+func (u *Usecase) ThreadPosts(slugID interface{}, flag bool, limit, since int, sort, desc string) ([]*Post, int) {
 	ctx := context.Background()
 	var row pgx.Row
 	var id int
 	if flag {
-		row = db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
 	} else {
-		row = db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
+		row = u.db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
 	}
 	if err := row.Scan(&id); err != nil {
 		return nil, 404
@@ -930,7 +939,7 @@ func ThreadPostsUsecase(slugID interface{}, flag bool, limit, since int, sort, d
 	}
 	fields = append(fields, limit)
 
-	rows, err := db.Pool.Query(ctx, query, fields...)
+	rows, err := u.db.Pool.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -948,7 +957,7 @@ func ThreadPostsUsecase(slugID interface{}, flag bool, limit, since int, sort, d
 	return result, 200
 }
 
-func ForumUsersUsecase(slug string, limit int, since, desc string) ([]*User, int) {
+func (u *Usecase) ForumUsers(slug string, limit int, since, desc string) ([]*User, int) {
 	query := `select nickname, fullname, email, about from forum_users where forum = $1 `
 	counter := 2
 	fields := make([]interface{}, 1)
@@ -971,12 +980,12 @@ func ForumUsersUsecase(slug string, limit int, since, desc string) ([]*User, int
 	fields = append(fields, limit)
 
 	ctx := context.Background()
-	row := db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", slug)
+	row := u.db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", slug)
 	if err := row.Scan(&slug); err != nil {
 		return nil, 404
 	}
 
-	rows, err := db.Pool.Query(ctx, query, fields...)
+	rows, err := u.db.Pool.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -993,8 +1002,8 @@ func ForumUsersUsecase(slug string, limit int, since, desc string) ([]*User, int
 	return result, 200
 }
 
-func UpdatePostUsecase(post *PostForm, id int) (*Post, int) {
-	detailed, status := GetPostUsecase(id, "")
+func (u *Usecase) UpdatePost(post *PostForm, id int) (*Post, int) {
+	detailed, status := u.GetPost(id, "")
 	if status != 200 {
 		return nil, status
 	}
@@ -1002,15 +1011,15 @@ func UpdatePostUsecase(post *PostForm, id int) (*Post, int) {
 		return detailed.Details, 200
 	}
 
-	db.Pool.Exec(context.Background(), "update posts set message = $1, edit = true where id = $2;", post.Message, id)
+	u.db.Pool.Exec(context.Background(), "update posts set message = $1, edit = true where id = $2;", post.Message, id)
 	detailed.Details.Message = post.Message
 	detailed.Details.IsEdited = true
 	return detailed.Details, 200
 }
 
-func GetPostUsecase(id int, related string) (*PostDetail, int) {
+func (u *Usecase) GetPost(id int, related string) (*PostDetail, int) {
 	post := &Post{}
-	row := db.Pool.QueryRow(context.Background(), "select id, parent, author, forum, thread, message, created, edit from posts where id = $1", id)
+	row := u.db.Pool.QueryRow(context.Background(), "select id, parent, author, forum, thread, message, created, edit from posts where id = $1", id)
 	err := row.Scan(&post.ID, &post.Parent, &post.Author, &post.Forum, &post.Thread,
 		&post.Message, &post.Created, &post.IsEdited)
 	if err != nil {
@@ -1019,15 +1028,15 @@ func GetPostUsecase(id int, related string) (*PostDetail, int) {
 	post.Created = post.Created.Round(time.Microsecond)
 	var forum *Forum
 	if strings.Contains(related, "forum") {
-		forum, _ = GetForumUsecase(post.Forum)
+		forum, _ = u.GetForum(post.Forum)
 	}
 	var thread *Thread
 	if strings.Contains(related, "thread") {
-		thread, _ = GetThreadUsecase(post.Thread, true)
+		thread, _ = u.GetThread(post.Thread, true)
 	}
 	var author *User
 	if strings.Contains(related, "user") {
-		author, _ = ProfileUsecase(post.Author)
+		author, _ = u.Profile(post.Author)
 	}
 	return &PostDetail{post, author, forum, thread}, 200
 }
