@@ -490,10 +490,20 @@ func (h *Handler) GetPost(ctx aero.Context) error {
 func (u *Usecase) SignUp(user *User) ([]*User, int) {
 	ctx := context.Background()
 	result := make([]*User, 0)
-	_, err := u.db.Pool.Exec(ctx, "insert into users values($1, $2, $3, $4);", user.Nick, user.Fullname, user.Email, user.About)
+	tx, err := u.db.Pool.Begin(ctx)
 	if err != nil {
-		rows, err := u.db.Pool.Query(ctx, "select nickname, fullname, email, about from users where nickname = $1 or email = $2;", user.Nick, user.Email)
+		return nil, 500
+	}
+	_, err = tx.Exec(ctx, "insert into users values($1, $2, $3, $4);", user.Nick, user.Fullname, user.Email, user.About)
+	if err != nil {
+		tx.Rollback(ctx)
+		tx, err = u.db.Pool.Begin(ctx)
 		if err != nil {
+			return nil, 500
+		}
+		rows, err := tx.Query(ctx, "select nickname, fullname, email, about from users where nickname = $1 or email = $2;", user.Nick, user.Email)
+		if err != nil {
+			tx.Rollback(ctx)
 			fmt.Println("creating user error: ", err)
 			return nil, 500
 		}
@@ -508,19 +518,28 @@ func (u *Usecase) SignUp(user *User) ([]*User, int) {
 			}
 			result = append(result, &User{nick, full, email, about})
 		}
+		tx.Commit(ctx)
 		return result, 409
 	}
+	tx.Commit(ctx)
 	result = append(result, user)
 	return result, 201
 }
 
 func (u *Usecase) Profile(nick string) (*User, int) {
 	user := &User{}
-	row := u.db.Pool.QueryRow(context.Background(), "select nickname, fullname, email, about from users where nickname = $1;", nick)
-	err := row.Scan(&user.Nick, &user.Fullname, &user.Email, &user.About)
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	row := tx.QueryRow(context.Background(), "select nickname, fullname, email, about from users where nickname = $1;", nick)
+	err = row.Scan(&user.Nick, &user.Fullname, &user.Email, &user.About)
 	if err == nil {
+		tx.Commit(ctx)
 		return user, 200
 	}
+	tx.Rollback(ctx)
 	return nil, 404
 }
 
@@ -554,10 +573,18 @@ func (u *Usecase) UpdateProfile(user *User) (*User, int) {
 	}
 	query += fmt.Sprintf(" where nickname = $%d returning *;", counter)
 	fields = append(fields, user.Nick)
-	row := u.db.Pool.QueryRow(context.Background(), query, fields...)
+
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(context.Background(), query, fields...)
 	var nick, full, email, about string
-	err := row.Scan(&nick, &full, &email, &about)
+	err = row.Scan(&nick, &full, &email, &about)
 	if err == nil {
+		tx.Commit(ctx)
 		return &User{nick, full, email, about}, 200
 	} else if err == pgx.ErrNoRows {
 		return nil, 404
@@ -567,7 +594,13 @@ func (u *Usecase) UpdateProfile(user *User) (*User, int) {
 
 func (u *Usecase) CreateForum(forum *Forum) (*Forum, int) {
 	ctx := context.Background()
-	row := u.db.Pool.QueryRow(ctx, "select nickname from users where nickname = $1;", forum.User)
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, "select nickname from users where nickname = $1;", forum.User)
 	if err := row.Scan(&forum.User); err != nil {
 		return nil, 404
 	}
@@ -577,21 +610,36 @@ func (u *Usecase) CreateForum(forum *Forum) (*Forum, int) {
 		forum, _ = u.GetForum(forum.Slug)
 		return forum, 409
 	}
+	tx.Commit(ctx)
 	return forum, 201
 }
 
 func (u *Usecase) GetForum(slug string) (*Forum, int) {
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
 	forum := &Forum{}
-	row := u.db.Pool.QueryRow(context.Background(), "select slug, title, author, threads, posts from forums where slug = $1;", slug)
+	row := tx.QueryRow(context.Background(), "select slug, title, author, threads, posts from forums where slug = $1;", slug)
 	if err := row.Scan(&forum.Slug, &forum.Title, &forum.User, &forum.Threads, &forum.Posts); err != nil {
 		return nil, 404
 	}
+	tx.Commit(ctx)
 	return forum, 200
 }
 
 func (u *Usecase) CreateThread(thread *Thread) (*Thread, int) {
 	ctx := context.Background()
-	rows, err := u.db.Pool.Query(ctx, "select nickname as slug from users where nickname = $1 union all select slug from forums where slug = $2;",
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, "select nickname as slug from users where nickname = $1 union all select slug from forums where slug = $2;",
 		thread.Author, thread.Forum)
 	if err != nil {
 		return nil, 404
@@ -621,6 +669,7 @@ func (u *Usecase) CreateThread(thread *Thread) (*Thread, int) {
 		thread, _ = u.GetThread(thread.Slug, false)
 		return thread, 409
 	}
+	tx.Commit(ctx)
 	return thread, 201
 }
 
@@ -712,15 +761,21 @@ func (u *Usecase) CreatePosts(posts []*PostForm, slugID interface{}, flag bool) 
 
 func (u *Usecase) GetThread(slugID interface{}, flag bool) (*Thread, int) {
 	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
 	var row pgx.Row
 	if flag {
-		row = u.db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where id = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where id = $1;", slugID)
 	} else {
-		row = u.db.Pool.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where slug = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id, forum, title, author, created, message, slug, votes from threads where slug = $1;", slugID)
 	}
 	thread := &Thread{}
 	var slug sql.NullString
-	err := row.Scan(&thread.ID, &thread.Forum, &thread.Title, &thread.Author, &thread.Created, &thread.Message, &slug, &thread.Votes)
+	err = row.Scan(&thread.ID, &thread.Forum, &thread.Title, &thread.Author, &thread.Created, &thread.Message, &slug, &thread.Votes)
 	if err != nil {
 		return nil, 404
 	}
@@ -728,6 +783,7 @@ func (u *Usecase) GetThread(slugID interface{}, flag bool) (*Thread, int) {
 	if slug.Valid {
 		thread.Slug = slug.String
 	}
+	tx.Commit(ctx)
 	return thread, 200
 }
 
@@ -754,11 +810,17 @@ func (u *Usecase) ForumThreads(forum string, limit int, since time.Time, desc st
 	fields = append(fields, limit)
 
 	ctx := context.Background()
-	row := u.db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", forum)
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, "select slug from forums where slug = $1;", forum)
 	if err := row.Scan(&forum); err != nil {
 		return nil, 404
 	}
-	rows, err := u.db.Pool.Query(ctx, query, fields...)
+	rows, err := tx.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -778,6 +840,7 @@ func (u *Usecase) ForumThreads(forum string, limit int, since time.Time, desc st
 		}
 		result = append(result, thread)
 	}
+	tx.Commit(ctx)
 	return result, 200
 }
 
@@ -807,25 +870,37 @@ func (u *Usecase) Status() (*DBStatus, int) {
 
 func (u *Usecase) ThreadVote(vote *Vote, slugID interface{}, flag bool) (*Thread, int) {
 	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
 	var row pgx.Row
 	var id int
 	if flag {
-		row = u.db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id from threads where id = $1;", slugID)
 	} else {
-		row = u.db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
 	}
 	if err := row.Scan(&id); err != nil {
 		return nil, 404
 	}
 
-	_, err := u.db.Pool.Exec(ctx, "insert into votes values($1, $2, $3);", vote.Author, id, vote.Voice)
+	_, err = tx.Exec(ctx, "insert into votes values($1, $2, $3);", vote.Author, id, vote.Voice)
 	if pgerr, ok := err.(*pgconn.PgError); ok {
 		if pgerr.Code == "23505" {
-			u.db.Pool.Exec(ctx, "update votes set value = $1 where author = $2 and thread = $3;", vote.Voice, vote.Author, id)
+			tx.Rollback(ctx)
+			tx, err = u.db.Pool.Begin(ctx)
+			if err != nil {
+				return nil, 500
+			}
+			tx.Exec(ctx, "update votes set value = $1 where author = $2 and thread = $3;", vote.Voice, vote.Author, id)
 		} else {
 			return nil, 404
 		}
 	}
+	tx.Commit(ctx)
 	return u.GetThread(id, true)
 }
 
@@ -856,9 +931,16 @@ func (u *Usecase) UpdateThread(thread *Thread, slugID interface{}, flag bool) (*
 	}
 	fields = append(fields, slugID)
 
-	row := u.db.Pool.QueryRow(context.Background(), query, fields...)
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(context.Background(), query, fields...)
 	var slug sql.NullString
-	err := row.Scan(&thread.ID, &thread.Title, &thread.Author, &thread.Forum, &thread.Message, &slug, &thread.Created, &thread.Votes)
+	err = row.Scan(&thread.ID, &thread.Title, &thread.Author, &thread.Forum, &thread.Message, &slug, &thread.Created, &thread.Votes)
 	if err != nil {
 		return nil, 404
 	}
@@ -866,17 +948,24 @@ func (u *Usecase) UpdateThread(thread *Thread, slugID interface{}, flag bool) (*
 	if slug.Valid {
 		thread.Slug = slug.String
 	}
+	tx.Commit(ctx)
 	return thread, 200
 }
 
 func (u *Usecase) ThreadPosts(slugID interface{}, flag bool, limit, since int, sort, desc string) ([]*Post, int) {
 	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
 	var row pgx.Row
 	var id int
 	if flag {
-		row = u.db.Pool.QueryRow(ctx, "select id from threads where id = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id from threads where id = $1;", slugID)
 	} else {
-		row = u.db.Pool.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
+		row = tx.QueryRow(ctx, "select id from threads where slug = $1;", slugID)
 	}
 	if err := row.Scan(&id); err != nil {
 		return nil, 404
@@ -939,7 +1028,7 @@ func (u *Usecase) ThreadPosts(slugID interface{}, flag bool, limit, since int, s
 	}
 	fields = append(fields, limit)
 
-	rows, err := u.db.Pool.Query(ctx, query, fields...)
+	rows, err := tx.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -954,6 +1043,7 @@ func (u *Usecase) ThreadPosts(slugID interface{}, flag bool, limit, since int, s
 		p.Created = p.Created.Round(time.Microsecond)
 		result = append(result, p)
 	}
+	tx.Commit(ctx)
 	return result, 200
 }
 
@@ -980,12 +1070,18 @@ func (u *Usecase) ForumUsers(slug string, limit int, since, desc string) ([]*Use
 	fields = append(fields, limit)
 
 	ctx := context.Background()
-	row := u.db.Pool.QueryRow(ctx, "select slug from forums where slug = $1;", slug)
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, "select slug from forums where slug = $1;", slug)
 	if err := row.Scan(&slug); err != nil {
 		return nil, 404
 	}
 
-	rows, err := u.db.Pool.Query(ctx, query, fields...)
+	rows, err := tx.Query(ctx, query, fields...)
 	if err != nil {
 		return nil, 500
 	}
@@ -999,6 +1095,7 @@ func (u *Usecase) ForumUsers(slug string, limit int, since, desc string) ([]*Use
 		}
 		result = append(result, u)
 	}
+	tx.Commit(ctx)
 	return result, 200
 }
 
@@ -1011,7 +1108,15 @@ func (u *Usecase) UpdatePost(post *PostForm, id int) (*Post, int) {
 		return detailed.Details, 200
 	}
 
-	u.db.Pool.Exec(context.Background(), "update posts set message = $1, edit = true where id = $2;", post.Message, id)
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	tx.Exec(ctx, "update posts set message = $1, edit = true where id = $2;", post.Message, id)
+	tx.Commit(ctx)
 	detailed.Details.Message = post.Message
 	detailed.Details.IsEdited = true
 	return detailed.Details, 200
@@ -1019,13 +1124,22 @@ func (u *Usecase) UpdatePost(post *PostForm, id int) (*Post, int) {
 
 func (u *Usecase) GetPost(id int, related string) (*PostDetail, int) {
 	post := &Post{}
-	row := u.db.Pool.QueryRow(context.Background(), "select id, parent, author, forum, thread, message, created, edit from posts where id = $1", id)
-	err := row.Scan(&post.ID, &post.Parent, &post.Author, &post.Forum, &post.Thread,
+	ctx := context.Background()
+	tx, err := u.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, 500
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, "select id, parent, author, forum, thread, message, created, edit from posts where id = $1", id)
+	err = row.Scan(&post.ID, &post.Parent, &post.Author, &post.Forum, &post.Thread,
 		&post.Message, &post.Created, &post.IsEdited)
 	if err != nil {
 		return nil, 404
 	}
+	tx.Commit(ctx)
 	post.Created = post.Created.Round(time.Microsecond)
+
 	var forum *Forum
 	if strings.Contains(related, "forum") {
 		forum, _ = u.GetForum(post.Forum)
